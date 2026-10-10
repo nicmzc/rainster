@@ -2,26 +2,42 @@
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>Rainster</title>
     <link rel="manifest" href="manifest.webmanifest">
     <meta name="theme-color" content="#1a1a24">
 
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Cinzel+Decorative&family=Press+Start+2P&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Cinzel+Decorative&family=IM+Fell+English&family=Press+Start+2P&display=swap" rel="stylesheet">
 
     <style>
+
+html {
+    -webkit-text-size-adjust: 100%;
+    -moz-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+}
+
+/* ===== COLORES DEL FONDO DEL INICIO ===== */
+:root {
+    --fondo-brillo-arriba: rgba(170, 0, 0, 0.55);
+    --fondo-brillo-abajo: rgba(120, 0, 0, 0.45);
+    --fondo-centro: #000000;
+    --fondo-medio: #0d0000;
+    --fondo-borde: #000000;
+}
+      
         #menu {
             position: fixed;
             inset: 0;
             z-index: 1000;
             overflow: hidden;
             background:
-                radial-gradient(circle at 92% 4%, rgba(170, 0, 0, 0.55), transparent 45%),
-                radial-gradient(circle at 8% 92%, rgba(120, 0, 0, 0.45), transparent 40%),
-                radial-gradient(circle at 40% 30%, #2a0000 0%, #0d0000 55%, #000 90%);
-            transition: opacity 0.6s;
+    radial-gradient(circle at 92% 4%, var(--fondo-brillo-arriba), transparent 45%),
+    radial-gradient(circle at 8% 92%, var(--fondo-brillo-abajo), transparent 40%),
+    radial-gradient(circle at 40% 30%, var(--fondo-centro) 0%, var(--fondo-medio) 55%, var(--fondo-borde) 90%);
+          transition: opacity 0.6s;
         }
         #menu.oculto { opacity: 0; pointer-events: none; }
 
@@ -32,6 +48,14 @@
             height: 100%;
             pointer-events: none;
         }
+      
+      #fuegoFondo {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+      }
 
         .pantalla {
             position: absolute;
@@ -157,7 +181,7 @@
             box-shadow: 0 0 18px rgba(255, 0, 0, 0.5);
         }
         .partidaNombre {
-            font-family: 'Cinzel Decorative', serif;
+            font-family: 'IM Fell English', Georgia, 'Times New Roman', serif;
             font-size: clamp(1.1rem, 2.6vw, 1.9rem);
             letter-spacing: 2px;
             color: #ffffff;
@@ -256,9 +280,9 @@
             width: 100%;
             box-sizing: border-box;
             padding: 0.6rem 0.2rem;
-            font-family: 'Cinzel Decorative', serif;
+            font-family: 'IM Fell English', Georgia, 'Times New Roman', serif;
             font-size: 1.3rem;
-            letter-spacing: 2px;
+            letter-spacing: 1px;
             color: #ffffff;
             background: none;
             border: none;
@@ -270,6 +294,125 @@
             justify-content: space-between;
             margin-top: 1.6rem;
         }
+
+.subpestanas {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 1.4vh 3vw 0;
+}
+.subpestanas[hidden] { display: none; }
+.subpestana, .buscador {
+    font-family: 'Cinzel Decorative', serif;
+    font-size: clamp(0.9rem, 2.2vw, 1.5rem);
+    letter-spacing: 2px;
+    color: rgba(255, 255, 255, 0.5);
+    background: rgba(60, 0, 0, 0.45);
+    border: 2px solid rgba(255, 215, 220, 0.55);
+    border-radius: 22px;
+    padding: 0.35rem 1.4rem;
+    cursor: pointer;
+    text-shadow: 0 0 10px #7a0000;
+    transition: color 0.2s, box-shadow 0.2s, border-color 0.2s;
+}
+.subpestana:hover { color: rgba(255, 255, 255, 0.8); }
+.subpestana.activa {
+    color: #ffffff;
+    border-color: rgba(255, 215, 220, 0.85);
+    background: rgba(90, 0, 0, 0.65);
+    text-shadow: 0 0 10px #ff0000, 0 0 25px #7a0000;
+    box-shadow: 0 0 14px rgba(255, 0, 0, 0.4);
+}
+.buscador {
+    flex: 1;
+    min-width: 0;
+    cursor: text;
+    color: #ffffff;
+    outline: none;
+    text-shadow: none;
+    font-family: 'IM Fell English', Georgia, 'Times New Roman', serif;
+    letter-spacing: 1px;
+}
+.buscador::placeholder {
+    color: rgba(255, 255, 255, 0.5);
+    font-family: 'Cinzel Decorative', serif;
+    letter-spacing: 2px;
+}
+.buscador:focus {
+    border-color: rgba(255, 215, 220, 0.85);
+    box-shadow: 0 0 14px rgba(255, 0, 0, 0.4);
+}
+
+.servidorCupo {
+    font-family: 'Cinzel Decorative', serif;
+    font-size: clamp(1.1rem, 2.6vw, 1.9rem);
+    letter-spacing: 2px;
+    color: #ffffff;
+    text-shadow: 0 0 10px #ff0000, 0 0 22px #7a0000;
+    white-space: nowrap;
+}
+.partida.lleno { opacity: 0.55; cursor: not-allowed; }
+.partida.lleno .servidorCupo { color: #ff6b6b; }
+
+#modalServidor {
+    position: absolute;
+    inset: 0;
+    z-index: 5;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.75);
+}
+#modalServidor.visible { display: flex; }
+.campo {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 0.5rem 0.2rem;
+    font-family: 'IM Fell English', Georgia, 'Times New Roman', serif;
+    font-size: 1.2rem;
+    letter-spacing: 1px;
+    color: #ffffff;
+    background: none;
+    border: none;
+    border-bottom: 2px solid rgba(255, 215, 220, 0.85);
+    outline: none;
+}
+.etiqueta {
+    margin: 1rem 0 0.2rem;
+    font-family: 'Cinzel Decorative', serif;
+    font-size: 0.85rem;
+    letter-spacing: 2px;
+    color: #d9b8b8;
+}
+.filaModal { display: flex; align-items: center; gap: 1rem; }
+.cupoNuevo {
+    min-width: 2.5rem;
+    text-align: center;
+    font-family: 'Cinzel Decorative', serif;
+    font-size: 1.4rem;
+    color: #ffffff;
+}
+
+.aviso {
+    position: fixed;
+    left: 50%;
+    bottom: 12vh;
+    z-index: 2000;
+    transform: translateX(-50%);
+    max-width: 90vw;
+    padding: 0.7rem 1.6rem;
+    font-family: 'IM Fell English', Georgia, 'Times New Roman', serif;
+    font-size: 1.1rem;
+    color: #ffffff;
+    background: rgba(20, 0, 0, 0.92);
+    border: 2px solid rgba(255, 215, 220, 0.85);
+    border-radius: 20px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s;
+}
+.aviso.visible { opacity: 1; }
+      
     </style>
 </head>
 <body style="margin: 0; overflow: hidden;">
@@ -281,6 +424,7 @@
 
     <!-- MENÚ DE INICIO -->
     <div id="menu">
+      <canvas id="fuegoFondo"></canvas>
         <canvas id="puntos"></canvas>
 
         <div id="pantallaInicio" class="pantalla">
@@ -299,16 +443,21 @@
                 <button class="pestana" id="pestanaServidores">Servidores</button>
             </div>
 
-            <div class="cuerpoJugar" id="listaPartidas"></div>
-            <div class="cuerpoJugar" id="listaServidores" hidden>
-                <!-- Acá va la lista de servidores -->
+            <div class="subpestanas" id="subpestanas" hidden>
+                <button class="subpestana activa" id="subOnline">Online</button>
+                <button class="subpestana" id="subLan">LAN</button>
+                <input class="buscador" id="buscadorServidores" type="text" placeholder="Buscar" maxlength="30" autocomplete="off">
             </div>
+
+            <div class="cuerpoJugar" id="listaPartidas"></div>
+            <div class="cuerpoJugar" id="listaServidores" hidden></div>
 
             <div class="pieJugar">
                 <button class="enlace" id="btnVolverJugar">‹ Volver</button>
                 <button class="botonCrear" id="btnCrear">Crear nueva partida</button>
             </div>
 
+            <!-- Ventana: nombre de la partida -->
             <div id="modalNombre">
                 <div class="cajaModal">
                     <h2 class="tituloModal">Nombre de la partida</h2>
@@ -319,17 +468,46 @@
                     </div>
                 </div>
             </div>
+
+            <!-- Ventana: crear servidor -->
+            <div id="modalServidor">
+                <div class="cajaModal" style="max-height:88vh;overflow-y:auto;">
+                    <h2 class="tituloModal">Nuevo servidor</h2>
+                    <div class="etiqueta">Nombre del servidor</div>
+                    <input class="campo" id="entradaServidor" type="text" maxlength="30" autocomplete="off">
+                    <div class="etiqueta">Tu nombre</div>
+                    <input class="campo" id="entradaHost" type="text" maxlength="20" autocomplete="off">
+                    <div class="etiqueta">Jugadores máximos</div>
+                    <div class="filaModal">
+                        <button class="enlace" id="btnMenosJug">−</button>
+                        <span class="cupoNuevo" id="cupoNuevo">10</span>
+                        <button class="enlace" id="btnMasJug">+</button>
+                    </div>
+                    <div class="etiqueta">Tipo</div>
+                    <div class="filaModal">
+                        <button class="subpestana activa" id="tipoOnline">Online</button>
+                        <button class="subpestana" id="tipoLan">LAN</button>
+                    </div>
+                    <div class="botonesModal">
+                        <button class="enlace" id="btnCancelarServidor">Cancelar</button>
+                        <button class="enlace" id="btnAceptarServidor">Crear</button>
+                    </div>
+                </div>
+            </div>
         </div>
 
         <div id="pantallaConfig" class="pantalla">
             <h1 class="titulo chico">Configuración</h1>
             <!-- Acá van las opciones de configuración -->
             <div class="botones" style="bottom: 8vh;">
+              <button class="boton" id="btnSalir" hidden>Salir al menú</button>
                 <button class="boton" id="btnVolver">Volver</button>
             </div>
         </div>
     </div>
 
+<div id="aviso" class="aviso"></div>
+  
     <script src="juego.js"></script>
     <script>
         if ("serviceWorker" in navigator) {
@@ -358,8 +536,165 @@
             const chispas = [];
             for (let i = 0; i < 70; i++) {
                 chispas.push({ x: Math.random() * ancho, y: Math.random() * alto, v: 6 + Math.random() * 18, r: 0.6 + Math.random() * 1.6, f: Math.random() * 6.28 });
-            }
+            } 
 
+// ===== FUEGO ROJO (textura animada) =====
+const FUERZA = 0.7;     // intensidad del fuego (0.6 = más suave, 1.4 = más fuerte)
+const BRASAS = 0.1;     // cantidad de brasas (0 = ninguna)
+
+const lienzoFuego = document.getElementById("fuegoFondo");
+const gl2 = lienzoFuego.getContext("webgl", { alpha: true, premultipliedAlpha: true, antialias: false });
+let uRes = null, uT = null, uFuerza = null;
+
+if (gl2) {
+    const vsSrc = "attribute vec2 p; void main(){ gl_Position = vec4(p, 0.0, 1.0); }";
+    const fsSrc = `
+        #ifdef GL_FRAGMENT_PRECISION_HIGH
+        precision highp float;
+        #else
+        precision mediump float;
+        #endif
+        uniform vec2 res;
+        uniform float t;
+        uniform float fuerza;
+
+        float hsh(vec2 p) {
+            p = fract(p * vec2(123.34, 456.21));
+            p += dot(p, p + 45.32);
+            return fract(p.x * p.y);
+        }
+        float noise(vec2 p) {
+            vec2 i = floor(p);
+            vec2 f = fract(p);
+            f = f * f * (3.0 - 2.0 * f);
+            float a = hsh(i);
+            float b = hsh(i + vec2(1.0, 0.0));
+            float c = hsh(i + vec2(0.0, 1.0));
+            float d = hsh(i + vec2(1.0, 1.0));
+            return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+        }
+        float fbm(vec2 p) {
+            float v = 0.0;
+            float a = 0.5;
+            for (int i = 0; i < 5; i++) {
+                v += a * noise(p);
+                p = p * 2.02 + vec2(1.7, 9.2);
+                a *= 0.5;
+            }
+            return v;
+        }
+        void main() {
+            vec2 uv = gl_FragCoord.xy / res;
+            float asp = res.x / res.y;
+            vec2 p = vec2(uv.x * asp, uv.y);
+
+            // Zonas iluminadas (las mismas del fondo): arriba derecha, abajo izquierda y dos manchas chicas
+            float d1 = length(p - vec2(0.92 * asp, 0.96)) / 0.95;
+            float d2 = length(p - vec2(0.04 * asp, 0.04)) / 0.80;
+            float d3 = length(p - vec2(0.12 * asp, 0.50)) / 0.22;
+            float d4 = length(p - vec2(0.42 * asp, 0.22)) / 0.25;
+            float m = clamp(max(max(1.0 - d1, 0.85 * (1.0 - d2)), max(0.45 * (1.0 - d3), 0.30 * (1.0 - d4))), 0.0, 1.0);
+
+            // Ruido deformado: da las vetas y remolinos del fuego
+            vec2 s = vec2(p.x, p.y - t * 0.05) * 3.2;
+            float qx = fbm(s + vec2(t * 0.04, 0.0));
+            float qy = fbm(s + vec2(5.2, -t * 0.03));
+            float f = fbm(s + 2.6 * vec2(qx, qy));
+
+            float dens = smoothstep(0.22 + 0.28 * (1.0 - m), 0.75 + 0.2 * (1.0 - m), f) * smoothstep(0.0, 0.5, m);
+            dens = clamp(dens * fuerza, 0.0, 1.0);
+            float core = smoothstep(0.55, 1.0, dens);
+            vec3 c = vec3(0.05 + 0.75 * dens + 0.2 * core, 0.10 * core, 0.03 * core);
+            gl_FragColor = vec4(c * dens, dens);
+        }
+    `;
+    function crearShader(tipo, src) {
+        const sh = gl2.createShader(tipo);
+        gl2.shaderSource(sh, src);
+        gl2.compileShader(sh);
+        return sh;
+    }
+    const prog = gl2.createProgram();
+    gl2.attachShader(prog, crearShader(gl2.VERTEX_SHADER, vsSrc));
+    gl2.attachShader(prog, crearShader(gl2.FRAGMENT_SHADER, fsSrc));
+    gl2.linkProgram(prog);
+    gl2.useProgram(prog);
+    const bufFuego = gl2.createBuffer();
+    gl2.bindBuffer(gl2.ARRAY_BUFFER, bufFuego);
+    gl2.bufferData(gl2.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl2.STATIC_DRAW);
+    const locP = gl2.getAttribLocation(prog, "p");
+    gl2.enableVertexAttribArray(locP);
+    gl2.vertexAttribPointer(locP, 2, gl2.FLOAT, false, 0, 0);
+    uRes = gl2.getUniformLocation(prog, "res");
+    uT = gl2.getUniformLocation(prog, "t");
+    uFuerza = gl2.getUniformLocation(prog, "fuerza");
+}
+
+// Se dibuja a baja resolución (es una textura suave) para que ande rápido en el celular
+function medirFuego() {
+    lienzoFuego.width = Math.max(2, Math.round(window.innerWidth * 0.4));
+    lienzoFuego.height = Math.max(2, Math.round(window.innerHeight * 0.4));
+    if (gl2) gl2.viewport(0, 0, lienzoFuego.width, lienzoFuego.height);
+}
+window.addEventListener("resize", medirFuego);
+medirFuego();
+
+function dibujarFuegoGL(t) {
+    if (!gl2) return;
+    gl2.clearColor(0, 0, 0, 0);
+    gl2.clear(gl2.COLOR_BUFFER_BIT);
+    gl2.uniform2f(uRes, lienzoFuego.width, lienzoFuego.height);
+    gl2.uniform1f(uT, t);
+    gl2.uniform1f(uFuerza, FUERZA);
+    gl2.drawArrays(gl2.TRIANGLE_STRIP, 0, 4);
+}
+
+// ===== BRASAS (puntitos y rayitas naranjas como en la foto) =====
+const brasas = [];
+let acumBrasas = 0;
+
+function dibujarFuego(dt, t) {
+    const escala = alto / 500;
+    acumBrasas += dt * 28 * BRASAS;
+    while (acumBrasas >= 1) {
+        acumBrasas -= 1;
+        if (brasas.length > 90) break;
+        brasas.push({
+            x: Math.random() * ancho,
+            y: Math.random() * alto,
+            vx: (4 + Math.random() * 18) * escala,
+            vy: -(6 + Math.random() * 30) * escala,
+            vida: 0,
+            dura: 2 + Math.random() * 3,
+            raya: Math.random() < 0.3,
+            f: Math.random() * 6.28
+        });
+    }
+    ctx.lineCap = "round";
+    for (let i = brasas.length - 1; i >= 0; i--) {
+        const b = brasas[i];
+        b.vida += dt;
+        const k = b.vida / b.dura;
+        if (k >= 1) { brasas.splice(i, 1); continue; }
+        b.x += b.vx * dt + Math.sin(t * 2 + b.f) * 5 * escala * dt;
+        b.y += b.vy * dt;
+        ctx.globalAlpha = Math.max(0, Math.sin(k * 3.1416) * (0.6 + 0.4 * Math.sin(t * 6 + b.f)));
+        ctx.strokeStyle = ctx.fillStyle = "rgb(255," + Math.round(120 + 80 * (1 - k)) + ",30)";
+        if (b.raya) {
+            ctx.lineWidth = 1.6 * Math.max(1, escala);
+            ctx.beginPath();
+            ctx.moveTo(b.x, b.y);
+            ctx.lineTo(b.x - b.vx * 0.25, b.y - b.vy * 0.25);
+            ctx.stroke();
+        } else {
+            ctx.beginPath();
+            ctx.arc(b.x, b.y, 1.3 * Math.max(1, escala), 0, 6.2832);
+            ctx.fill();
+        }
+    }
+    ctx.globalAlpha = 1;
+                       }
+          
             let anterior = performance.now();
 
             function animar(ahora) {
@@ -368,6 +703,8 @@
                 anterior = ahora;
                 const t = ahora / 1000;
                 ctx.clearRect(0, 0, ancho, alto);
+                dibujarFuego(dt, t);
+                dibujarFuegoGL(t);
                 for (const c of chispas) {
                     c.y -= c.v * dt;
                     c.x += Math.sin(t + c.f) * 6 * dt;
@@ -386,7 +723,7 @@
                 const vida = p < 0.6 ? 1 : 1 - (p - 0.6) / 0.4;
 
                 if (vida > 0.02) {
-                    ctx.fillStyle = "rgba(255,200,210,0.85)";
+                    ctx.fillStyle = "#6f3e47";
                     const primera = Math.floor((-paso - desp) / paso);
                     const ultima = Math.ceil((ancho + paso - desp) / paso);
                     for (let k = primera; k <= ultima; k++) {
@@ -471,13 +808,10 @@
                 contenedor.innerHTML = "";
                 const lista = leerPartidas();
 
-                if (lista.length === 0) {
-                    const vacio = document.createElement("p");
-                    vacio.className = "vacio";
-                    vacio.textContent = "No tenés partidas guardadas todavía";
-                    contenedor.appendChild(vacio);
-                    return;
-                }
+                    if (lista.length === 0) {
+        mensaje(texto ? "Ningún servidor coincide con tu búsqueda" : "No hay servidores disponibles");
+        return;
+                    }
 
                 lista.sort(function (a, b) { return b.ultima - a.ultima; });
 
@@ -513,12 +847,19 @@
 
             // Cambia entre "Partidas Guardadas" y "Servidores"
             function mostrarPestana(cual) {
-                const enPartidas = (cual === "partidas");
-                document.getElementById("pestanaPartidas").classList.toggle("activa", enPartidas);
-                document.getElementById("pestanaServidores").classList.toggle("activa", !enPartidas);
-                document.getElementById("listaPartidas").hidden = !enPartidas;
-                document.getElementById("listaServidores").hidden = enPartidas;
-                document.getElementById("btnCrear").hidden = !enPartidas;
+    const enPartidas = (cual === "partidas");
+    pestanaActual = cual;
+    document.getElementById("pestanaPartidas").classList.toggle("activa", enPartidas);
+    document.getElementById("pestanaServidores").classList.toggle("activa", !enPartidas);
+    document.getElementById("listaPartidas").hidden = !enPartidas;
+    document.getElementById("listaServidores").hidden = enPartidas;
+    document.getElementById("subpestanas").hidden = enPartidas;
+    document.getElementById("btnCrear").textContent = enPartidas ? "Crear nueva partida" : "Crear nuevo servidor";
+    if (!enPartidas) {
+        cargandoServidores = true;
+        dibujarServidores();
+        pedirServidores();
+    }
             }
 
             // Entra al juego con una partida guardada
@@ -574,6 +915,251 @@
                 crearPartida(nombre.slice(0, 30));
             }
 
+// ===== SERVIDORES =====
+let pestanaActual = "partidas";
+let tipoServidores = "online";
+let listaCache = [];
+let cargandoServidores = false;
+let errorServidores = false;
+let uniendose = false;
+let maxNuevo = 10;
+let tipoNuevo = "online";
+
+const listaServidores = document.getElementById("listaServidores");
+const buscador = document.getElementById("buscadorServidores");
+const modalServidor = document.getElementById("modalServidor");
+const entradaServidor = document.getElementById("entradaServidor");
+const entradaHost = document.getElementById("entradaHost");
+const avisoCaja = document.getElementById("aviso");
+let temporizadorAviso = null;
+
+function mostrarAviso(texto) {
+    avisoCaja.textContent = texto;
+    avisoCaja.classList.add("visible");
+    clearTimeout(temporizadorAviso);
+    temporizadorAviso = setTimeout(function () { avisoCaja.classList.remove("visible"); }, 2800);
+}
+
+function leerNombreJugador() {
+    try { return localStorage.getItem("rainster_nombre") || "Jugador"; } catch (e) { return "Jugador"; }
+}
+
+function guardarNombreJugador(nombre) {
+    try { localStorage.setItem("rainster_nombre", nombre); } catch (e) {}
+}
+
+// Pide la lista de servidores
+function pedirServidores() {
+    fetch("/api/servidores", { cache: "no-store" })
+        .then(function (r) {
+            if (!r.ok) return [];
+            return r.json();
+        })
+        .then(function (lista) {
+            listaCache = Array.isArray(lista) ? lista : [];
+            errorServidores = false;
+        })
+        .catch(function (e) {
+            if (e instanceof TypeError) {
+                errorServidores = true;   // sin internet / servidor apagado
+            } else {
+                listaCache = [];
+                errorServidores = false;
+            }
+        })
+        .then(function () {
+            cargandoServidores = false;
+            dibujarServidores();
+        });
+}
+
+// Dibuja la lista (con el filtro de Online / LAN y el buscador)
+function dibujarServidores() {
+    const y = listaServidores.scrollTop;
+    listaServidores.innerHTML = "";
+
+    function mensaje(texto, conReintento) {
+        const p = document.createElement("p");
+        p.className = "vacio";
+        p.textContent = texto;
+        listaServidores.appendChild(p);
+        if (conReintento) {
+            const b = document.createElement("button");
+            b.className = "enlace";
+            b.style.cssText = "display:block;margin:1rem auto 0;";
+            b.textContent = "Reintentar";
+            b.addEventListener("click", function () {
+                cargandoServidores = true;
+                dibujarServidores();
+                pedirServidores();
+            });
+            listaServidores.appendChild(b);
+        }
+    }
+
+    if (cargandoServidores) { mensaje("Buscando servidores..."); return; }
+    if (errorServidores) { mensaje("No se pudo conectar con el servidor", true); return; }
+
+    const texto = buscador.value.trim().toLowerCase();
+    const lista = listaCache.filter(function (s) {
+        return s.tipo === tipoServidores &&
+            (!texto || s.nombre.toLowerCase().includes(texto) || s.host.toLowerCase().includes(texto));
+    });
+
+    if (lista.length === 0) {
+        mensaje(texto ? "Ningún servidor coincide con tu búsqueda" : "No hay servidores disponibles");
+        return;
+    }
+
+    lista.forEach(function (s) {
+        const lleno = s.jugadores >= s.max;
+        const tarjeta = document.createElement("div");
+        tarjeta.className = "partida" + (lleno ? " lleno" : "");
+
+        const textos = document.createElement("div");
+        const nombre = document.createElement("div");
+        nombre.className = "partidaNombre";
+        nombre.textContent = s.nombre;
+        const info = document.createElement("div");
+        info.className = "partidaInfo";
+        info.textContent = "Host: " + s.host + "  ·  " + (s.tipo === "online" ? "Online" : "LAN");
+        textos.appendChild(nombre);
+        textos.appendChild(info);
+
+        const cupo = document.createElement("div");
+        cupo.className = "servidorCupo";
+        cupo.textContent = s.jugadores + "/" + s.max;
+
+        tarjeta.addEventListener("click", function () { unirseServidor(s); });
+        tarjeta.appendChild(textos);
+        tarjeta.appendChild(cupo);
+        listaServidores.appendChild(tarjeta);
+    });
+    listaServidores.scrollTop = y;
+}
+
+// Entra a un servidor
+function unirseServidor(s) {
+    if (uniendose) return;
+    if (s.jugadores >= s.max) { mostrarAviso("Ese servidor está lleno"); return; }
+    uniendose = true;
+    mostrarAviso("Conectando a " + s.nombre + "...");
+    window.conectarServidor(s.id, leerNombreJugador(), function () {
+        uniendose = false;
+        partidaActual = null;
+        entrarAlJuego();
+    }, function (motivo) {
+        uniendose = false;
+        mostrarAviso(motivo || "No se pudo entrar al servidor");
+        pedirServidores();
+    });
+}
+
+// Ventanita para crear un servidor
+function actualizarCupoNuevo() {
+    document.getElementById("cupoNuevo").textContent = maxNuevo;
+}
+
+function elegirTipoNuevo(tipo) {
+    tipoNuevo = tipo;
+    document.getElementById("tipoOnline").classList.toggle("activa", tipo === "online");
+    document.getElementById("tipoLan").classList.toggle("activa", tipo === "lan");
+}
+
+function abrirModalServidor() {
+    entradaHost.value = leerNombreJugador();
+    entradaServidor.value = "Servidor de " + leerNombreJugador();
+    maxNuevo = 10;
+    actualizarCupoNuevo();
+    elegirTipoNuevo(tipoServidores);
+    modalServidor.classList.add("visible");
+    entradaServidor.focus();
+    entradaServidor.select();
+}
+
+function cerrarModalServidor() {
+    modalServidor.classList.remove("visible");
+}
+
+function confirmarServidor() {
+    if (uniendose) return;
+    const nombre = entradaServidor.value.trim().slice(0, 30) || "Servidor sin nombre";
+    const host = entradaHost.value.trim().slice(0, 20) || "Jugador";
+    guardarNombreJugador(host);
+
+    fetch("/api/servidores", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ nombre: nombre, host: host, max: maxNuevo, tipo: tipoNuevo })
+    })
+        .then(function (r) {
+            return r.json().then(function (datos) {
+                if (!r.ok) throw new Error(datos.error || "No se pudo crear el servidor");
+                return datos;
+            });
+        })
+        .then(function (datos) {
+            cerrarModalServidor();
+            unirseServidor({ id: datos.id, nombre: nombre, jugadores: 0, max: maxNuevo });
+        })
+                .catch(function (e) {
+            if (e instanceof TypeError) mostrarAviso("No se pudo conectar con el servidor");
+            else if (e instanceof SyntaxError) mostrarAviso("El servidor no está actualizado: reinicialo");
+            else mostrarAviso(e.message);
+        });
+}
+// Botones de los servidores
+document.getElementById("subOnline").addEventListener("click", function () {
+    tipoServidores = "online";
+    document.getElementById("subOnline").classList.add("activa");
+    document.getElementById("subLan").classList.remove("activa");
+    dibujarServidores();
+});
+document.getElementById("subLan").addEventListener("click", function () {
+    tipoServidores = "lan";
+    document.getElementById("subLan").classList.add("activa");
+    document.getElementById("subOnline").classList.remove("activa");
+    dibujarServidores();
+});
+buscador.addEventListener("input", dibujarServidores);
+
+document.getElementById("tipoOnline").addEventListener("click", function () { elegirTipoNuevo("online"); });
+document.getElementById("tipoLan").addEventListener("click", function () { elegirTipoNuevo("lan"); });
+document.getElementById("btnMenosJug").addEventListener("click", function () {
+    maxNuevo = Math.max(2, maxNuevo - 1);
+    actualizarCupoNuevo();
+});
+document.getElementById("btnMasJug").addEventListener("click", function () {
+    maxNuevo = Math.min(10, maxNuevo + 1);
+    actualizarCupoNuevo();
+});
+document.getElementById("btnAceptarServidor").addEventListener("click", confirmarServidor);
+document.getElementById("btnCancelarServidor").addEventListener("click", cerrarModalServidor);
+
+// Que el juego no se mueva mientras escribís
+[buscador, entradaServidor, entradaHost].forEach(function (campo) {
+    campo.addEventListener("keydown", function (e) {
+        e.stopPropagation();
+        if (campo !== buscador) {
+            if (e.key === "Enter") confirmarServidor();
+            if (e.key === "Escape") cerrarModalServidor();
+        }
+    });
+    campo.addEventListener("keyup", function (e) { e.stopPropagation(); });
+});
+
+// Se actualiza sola cada 3 segundos mientras mirás la lista
+setInterval(function () {
+    if (pestanaActual !== "servidores") return;
+    if (!menu.classList.contains("jugar") || menu.classList.contains("oculto")) return;
+    if (uniendose) return;
+    pedirServidores();
+}, 3000);
+
+document.getElementById("btnSalir").addEventListener("click", function () {
+    location.reload();
+});
+          
             // Botones de esta sección
             document.getElementById("btnJugar").addEventListener("click", function () {
                 dibujarPartidas();
@@ -589,7 +1175,10 @@
 
             document.getElementById("pestanaPartidas").addEventListener("click", function () { mostrarPestana("partidas"); });
             document.getElementById("pestanaServidores").addEventListener("click", function () { mostrarPestana("servidores"); });
-            document.getElementById("btnCrear").addEventListener("click", abrirModalNombre);
+            document.getElementById("btnCrear").addEventListener("click", function () {
+    if (pestanaActual === "partidas") abrirModalNombre();
+    else abrirModalServidor();
+});
             document.getElementById("btnAceptarNombre").addEventListener("click", confirmarNombre);
             document.getElementById("btnCancelarNombre").addEventListener("click", cerrarModalNombre);
 
@@ -609,6 +1198,7 @@
                 clearTimeout(temporizador);
                 try { document.exitPointerLock(); } catch (e) {}
                 btnConfigJuego.style.display = "none";
+              document.getElementById("btnSalir").hidden = false;
                 reanudar();
                 menu.style.display = "block";
                 menu.classList.add("config");

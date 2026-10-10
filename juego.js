@@ -374,29 +374,71 @@ if (!gl) {
         gl.drawArrays(gl.TRIANGLES, 0, lista.length / 6);
     }
 
-    // Conexión con el servidor
-    const direccion =
-        (location.protocol === "https:" ? "wss://" : "ws://") + location.host;
-    const conexion = new WebSocket(direccion);
+        // Conexión con el servidor (solo cuando entrás a un servidor desde el menú)
+    let conexion = null;
 
-    conexion.onmessage = function (e) {
-        try {
-            const mensaje = JSON.parse(e.data);
-            if (mensaje.tipo === "hola") miId = mensaje.id;
-            if (mensaje.tipo === "jugadores") otros = mensaje.jugadores;
-        } catch (error) {}
+    window.desconectarServidor = function () {
+        if (conexion) {
+            conexion.onclose = null;
+            conexion.onerror = null;
+            try { conexion.close(); } catch (e) {}
+            conexion = null;
+        }
+        miId = null;
+        otros = {};
     };
 
-    conexion.onerror = function () {
-        console.log("Sin servidor: modo un solo jugador");
+    window.conectarServidor = function (sala, nombre, alEntrar, alFallar) {
+        window.desconectarServidor();
+        let entro = false;
+        let fallo = false;
+
+        function fallar(motivo) {
+            if (fallo || entro) return;
+            fallo = true;
+            window.desconectarServidor();
+            alFallar(motivo);
+        }
+
+        const direccion =
+            (location.protocol === "https:" ? "wss://" : "ws://") + location.host +
+            "/?sala=" + encodeURIComponent(sala) + "&nombre=" + encodeURIComponent(nombre);
+
+        let ws;
+        try {
+            ws = new WebSocket(direccion);
+        } catch (error) {
+            fallar("No se pudo conectar al servidor");
+            return;
+        }
+        conexion = ws;
+
+        ws.onmessage = function (e) {
+            try {
+                const mensaje = JSON.parse(e.data);
+                if (mensaje.tipo === "hola") { miId = mensaje.id; entro = true; alEntrar(); }
+                if (mensaje.tipo === "error") fallar(mensaje.motivo);
+                if (mensaje.tipo === "jugadores") otros = mensaje.jugadores;
+            } catch (error) {}
+        };
+
+        ws.onerror = function () {
+            fallar("No se pudo conectar al servidor");
+        };
+
+        ws.onclose = function () {
+            if (!entro) { fallar("No se pudo conectar al servidor"); return; }
+            alert("Se perdió la conexión con el servidor");
+            location.reload();
+        };
     };
 
     setInterval(function () {
-        if (conexion.readyState === WebSocket.OPEN) {
-          conexion.send(JSON.stringify({ x: px, z: pz, yaw: yaw, y: saltoY }));
+        if (conexion && conexion.readyState === WebSocket.OPEN) {
+            conexion.send(JSON.stringify({ x: px, z: pz, yaw: yaw, y: saltoY }));
         }
     }, 50);
-
+  
    // ===== SALTO Y CORRER =====
     let saltoY = 0;
     let velY = 0;

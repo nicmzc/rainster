@@ -33,6 +33,7 @@ self.addEventListener("activate", function (e) {
 // Primero intenta la red; si falla, usa la caché
 self.addEventListener("fetch", function (e) {
     if (e.request.method !== "GET") return;
+  if (new URL(e.request.url).pathname.startsWith("/api/")) return;
     if (!e.request.url.startsWith(self.location.origin)) return;
 
     e.respondWith(

@@ -807,12 +807,14 @@ function dibujarFuego(dt, t) {
                 const contenedor = document.getElementById("listaPartidas");
                 contenedor.innerHTML = "";
                 const lista = leerPartidas();
-
-                    if (lista.length === 0) {
-        mensaje(texto ? "Ningún servidor coincide con tu búsqueda" : "No hay servidores disponibles");
-        return;
-                    }
-
+                                if (lista.length === 0) {
+                    const vacio = document.createElement("p");
+                    vacio.className = "vacio";
+                    vacio.textContent = "No tenés partidas guardadas todavía";
+                    contenedor.appendChild(vacio);
+                    return;
+                }
+                
                 lista.sort(function (a, b) { return b.ultima - a.ultima; });
 
                 lista.forEach(function (partida) {

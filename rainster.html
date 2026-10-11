@@ -412,7 +412,6 @@ html {
     transition: opacity 0.3s;
 }
 .aviso.visible { opacity: 1; }
-      
 
 /* ===== PAUSA ===== */
 #pausa {
@@ -651,16 +650,18 @@ html {
                 <button class="boton" id="btnVolver">Volver</button>
             </div>
         </div>
+    </div>
 
-<div id="pausa">
-            <div class="pausaCaja">
-                <h1 class="pausaTitulo">Pausa</h1>
-                <button class="boton pausaBoton" id="pausaReanudar">Reanudar</button>
-                <button class="boton pausaBoton" id="pausaConfig">Configuración</button>
-                <button class="boton pausaBoton" id="pausaCerrarServidor" hidden>Cerrar servidor</button>
-                <button class="boton pausaBoton" id="pausaSalir">Salir al menú</button>
-            </div>
+    <!-- MENÚ DE PAUSA -->
+    <div id="pausa">
+        <div class="pausaCaja">
+            <h2 class="pausaTitulo">Pausa</h2>
+            <button class="boton pausaBoton" id="pausaReanudar">Reanudar</button>
+            <button class="boton pausaBoton" id="pausaConfig">Configuración</button>
+            <button class="boton pausaBoton" id="pausaCerrarServidor" hidden>Cerrar servidor</button>
+            <button class="boton pausaBoton" id="pausaSalir">Salir al menú</button>
         </div>
+    </div>
 
 <div id="aviso" class="aviso"></div>
 

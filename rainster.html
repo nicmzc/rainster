@@ -413,6 +413,110 @@ html {
 }
 .aviso.visible { opacity: 1; }
       
+
+/* ===== PAUSA ===== */
+#pausa {
+    position: fixed;
+    inset: 0;
+    z-index: 1500;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.72);
+    backdrop-filter: blur(3px);
+}
+#pausa.visible { display: flex; }
+.pausaCaja {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: clamp(0.6rem, 2.4vh, 1.6rem);
+    max-height: 96vh;
+    overflow-y: auto;
+    padding: 0.5rem 1rem;
+}
+.pausaTitulo {
+    margin: 0 0 0.4rem;
+    font-family: 'Cinzel Decorative', serif;
+    font-size: clamp(1.6rem, 5vw, 3rem);
+    letter-spacing: 6px;
+    color: #ffffff;
+    text-shadow: 0 0 10px #ff0000, 0 0 30px #7a0000;
+}
+.pausaBoton {
+    width: min(80vw, 420px);
+    font-size: clamp(1.1rem, 3vw, 2rem);
+    padding: 0.3rem 1.5rem;
+    text-align: center;
+    background: linear-gradient(to right, transparent, rgba(60, 0, 0, 0.85) 30%, rgba(60, 0, 0, 0.85) 70%, transparent);
+}
+.pausaBoton:hover { transform: scale(1.04); }
+
+/* ===== CONFIGURACIÓN ===== */
+.configCuerpo {
+    position: absolute;
+    left: 3vw;
+    right: 3vw;
+    top: 22vh;
+    bottom: 24vh;
+    max-width: 720px;
+    overflow-y: auto;
+    padding-right: 0.5rem;
+}
+.seccion {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+    padding: 0.5rem 0.2rem;
+    background: none;
+    border: none;
+    border-bottom: 2px solid rgba(255, 215, 220, 0.6);
+    font-family: 'Cinzel Decorative', serif;
+    font-size: clamp(1.1rem, 2.8vw, 1.8rem);
+    letter-spacing: 3px;
+    color: #ffffff;
+    text-shadow: 0 0 10px #ff0000, 0 0 25px #7a0000;
+    cursor: pointer;
+}
+.seccionCuerpo { padding: 0.4rem 0.2rem 0.8rem; }
+.seccionCuerpo[hidden] { display: none; }
+.fila {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.4rem 0;
+}
+.filaEtiqueta {
+    font-family: 'Cinzel Decorative', serif;
+    font-size: clamp(0.85rem, 1.8vw, 1.2rem);
+    letter-spacing: 2px;
+    color: #d9b8b8;
+}
+.deslizador { flex: 1; max-width: 55%; accent-color: #ff2a2a; }
+.valor {
+    min-width: 3.5rem;
+    text-align: right;
+    font-family: 'Cinzel Decorative', serif;
+    color: #ffffff;
+}
+.tecla, .interruptor {
+    min-width: 7rem;
+    padding: 0.25rem 1rem;
+    font-family: 'Cinzel Decorative', serif;
+    font-size: clamp(0.85rem, 1.8vw, 1.2rem);
+    color: #ffffff;
+    background: rgba(60, 0, 0, 0.6);
+    border: 2px solid rgba(255, 215, 220, 0.7);
+    border-radius: 16px;
+    cursor: pointer;
+}
+.interruptor.activo {
+    background: rgba(120, 0, 0, 0.75);
+    box-shadow: 0 0 12px rgba(255, 0, 0, 0.5);
+}
+
     </style>
 </head>
 <body style="margin: 0; overflow: hidden;">
@@ -420,7 +524,9 @@ html {
     <canvas id="juego"></canvas>
 
     <!-- Botón de Configuración dentro del juego -->
-    <button id="btnConfigJuego" class="boton" style="display:none; position:fixed; top:20px; right:20px; z-index:900; font-size:1.1rem; padding:0.3rem 1.2rem;">Configuración</button>
+    <button id="btnConfigJuego" class="boton" style="display:none; 
+    position:fixed; top:20px; right:20px; z-index:900; font-size:1.1rem; 
+    padding:0.3rem 1.2rem;">Pausa</button>
 
     <!-- MENÚ DE INICIO -->
     <div id="menu">
@@ -496,18 +602,68 @@ html {
             </div>
         </div>
 
-        <div id="pantallaConfig" class="pantalla">
+      <div id="pantallaConfig" class="pantalla">
             <h1 class="titulo chico">Configuración</h1>
-            <!-- Acá van las opciones de configuración -->
+
+            <div class="configCuerpo">
+                <button class="seccion" data-sec="secSens">Sensibilidad <span class="mas">+</span></button>
+                <div class="seccionCuerpo" id="secSens" hidden>
+                    <div class="fila">
+                        <span class="filaEtiqueta">Mouse</span>
+                        <input class="deslizador" id="ajSensMouse" type="range" min="0.2" max="3" step="0.1">
+                        <span class="valor" id="ajSensMouseV"></span>
+                    </div>
+                    <div class="fila">
+                        <span class="filaEtiqueta">Dedo (celular)</span>
+                        <input class="deslizador" id="ajSensDedo" type="range" min="0.2" max="3" step="0.1">
+                        <span class="valor" id="ajSensDedoV"></span>
+                    </div>
+                </div>
+
+                <button class="seccion" data-sec="secSonidos">Sonidos <span class="mas">+</span></button>
+                <div class="seccionCuerpo" id="secSonidos" hidden>
+                    <div class="fila">
+                        <span class="filaEtiqueta">Volumen</span>
+                        <input class="deslizador" id="ajVolumen" type="range" min="0" max="1" step="0.05">
+                        <span class="valor" id="ajVolumenV"></span>
+                    </div>
+                    <div class="fila">
+                        <span class="filaEtiqueta">Silenciar</span>
+                        <button class="interruptor" id="ajSilencio"></button>
+                    </div>
+                </div>
+
+                <button class="seccion" data-sec="secControles">Controles <span class="mas">+</span></button>
+                <div class="seccionCuerpo" id="secControles" hidden>
+                    <div id="ajTeclas"></div>
+                    <div class="fila">
+                        <span class="filaEtiqueta">Invertir mira vertical</span>
+                        <button class="interruptor" id="ajInvertir"></button>
+                    </div>
+                    <div class="fila">
+                        <button class="enlace" id="ajRestablecer">Restablecer controles</button>
+                    </div>
+                </div>
+            </div>
+
             <div class="botones" style="bottom: 8vh;">
-              <button class="boton" id="btnSalir" hidden>Salir al menú</button>
+                <button class="boton" id="btnSalir" hidden>Salir al menú</button>
                 <button class="boton" id="btnVolver">Volver</button>
             </div>
         </div>
-    </div>
+
+<div id="pausa">
+            <div class="pausaCaja">
+                <h1 class="pausaTitulo">Pausa</h1>
+                <button class="boton pausaBoton" id="pausaReanudar">Reanudar</button>
+                <button class="boton pausaBoton" id="pausaConfig">Configuración</button>
+                <button class="boton pausaBoton" id="pausaCerrarServidor" hidden>Cerrar servidor</button>
+                <button class="boton pausaBoton" id="pausaSalir">Salir al menú</button>
+            </div>
+        </div>
 
 <div id="aviso" class="aviso"></div>
-  
+
     <script src="juego.js"></script>
     <script>
         if ("serviceWorker" in navigator) {
@@ -760,6 +916,7 @@ function dibujarFuego(dt, t) {
 
             function entrarAlJuego() {
                 enJuego = true;
+                if (!atrasPuesto) { atrasPuesto = true; ponerEstadoAtras(); }
                 menu.classList.add("oculto");
                 temporizador = setTimeout(function () {
                     menu.style.display = "none";
@@ -814,7 +971,7 @@ function dibujarFuego(dt, t) {
                     contenedor.appendChild(vacio);
                     return;
                 }
-                
+
                 lista.sort(function (a, b) { return b.ultima - a.ultima; });
 
                 lista.forEach(function (partida) {
@@ -1035,6 +1192,18 @@ function dibujarServidores() {
         tarjeta.addEventListener("click", function () { unirseServidor(s); });
         tarjeta.appendChild(textos);
         tarjeta.appendChild(cupo);
+        if (leerTokens()[s.id]) {
+            const cerrar = document.createElement("button");
+            cerrar.className = "partidaBorrar";
+            cerrar.title = "Cerrar servidor";
+            cerrar.textContent = "✕";
+            cerrar.addEventListener("click", function (e) {
+                e.stopPropagation();
+                if (!confirm('¿Cerrar el servidor "' + s.nombre + '"? Se va a sacar a todos los jugadores.')) return;
+                cerrarServidorPropio(s.id, function () { pedirServidores(); });
+            });
+            tarjeta.appendChild(cerrar);
+        }
         listaServidores.appendChild(tarjeta);
     });
     listaServidores.scrollTop = y;
@@ -1048,6 +1217,7 @@ function unirseServidor(s) {
     mostrarAviso("Conectando a " + s.nombre + "...");
     window.conectarServidor(s.id, leerNombreJugador(), function () {
         uniendose = false;
+        servidorActual = s.id;
         partidaActual = null;
         entrarAlJuego();
     }, function (motivo) {
@@ -1101,6 +1271,7 @@ function confirmarServidor() {
             });
         })
         .then(function (datos) {
+            guardarToken(datos.id, datos.token);
             cerrarModalServidor();
             unirseServidor({ id: datos.id, nombre: nombre, jugadores: 0, max: maxNuevo });
         })
@@ -1196,11 +1367,56 @@ document.getElementById("btnSalir").addEventListener("click", function () {
                 destino = -recorrido();
             });
 
-            btnConfigJuego.addEventListener("click", function () {
-                clearTimeout(temporizador);
+            document.getElementById("btnVolver").addEventListener("click", function () {
+                if (enJuego) {
+                    volverAPausa();
+                } else {
+                    menu.classList.remove("config");
+                    destino = 0;
+                }
+            });
+
+// ===== PAUSA =====
+            const pausa = document.getElementById("pausa");
+            let pausado = false;
+            let tPausa = 0;
+            let atrasPuesto = false;
+
+            function ponerEstadoAtras() {
+                try { history.pushState({ rainster: 1 }, "", location.href); } catch (e) {}
+            }
+
+            function configAbiertaEnJuego() {
+                return menu.classList.contains("config") && !menu.classList.contains("oculto");
+            }
+
+            function abrirPausa() {
+                if (!enJuego || pausado) return;
+                pausado = true;
+                tPausa = performance.now();
+                window.juegoPausado = true;
+                if (window.soltarControles) window.soltarControles();
                 try { document.exitPointerLock(); } catch (e) {}
                 btnConfigJuego.style.display = "none";
-              document.getElementById("btnSalir").hidden = false;
+                document.getElementById("pausaCerrarServidor").hidden = !(servidorActual && leerTokens()[servidorActual]);
+                pausa.classList.add("visible");
+            }
+
+            function cerrarPausa() {
+                if (!pausado) return;
+                pausado = false;
+                tPausa = performance.now();
+                window.juegoPausado = false;
+                pausa.classList.remove("visible");
+                btnConfigJuego.style.display = "block";
+                if (!("ontouchstart" in window)) {
+                    try { document.getElementById("juego").requestPointerLock(); } catch (e) {}
+                }
+            }
+
+            function abrirConfigDesdePausa() {
+                pausa.classList.remove("visible");
+                clearTimeout(temporizador);
                 reanudar();
                 menu.style.display = "block";
                 menu.classList.add("config");
@@ -1208,17 +1424,267 @@ document.getElementById("btnSalir").addEventListener("click", function () {
                 destino = desp;
                 void menu.offsetWidth;
                 menu.classList.remove("oculto");
-            });
+            }
 
-            document.getElementById("btnVolver").addEventListener("click", function () {
-                if (enJuego) {
-                    entrarAlJuego();
-                } else {
+            function volverAPausa() {
+                tPausa = performance.now();
+                menu.classList.add("oculto");
+                temporizador = setTimeout(function () {
+                    menu.style.display = "none";
+                    menu.classList.remove("jugar");
                     menu.classList.remove("config");
+                    corriendo = false;
+                    desp = 0;
                     destino = 0;
+                }, 700);
+                pausa.classList.add("visible");
+            }
+
+            function salirDelJuego() {
+                if (servidorActual && leerTokens()[servidorActual]) {
+                    if (confirm("Sos el host de este servidor.\n\nAceptar: cerrar el servidor para todos\nCancelar: salir y dejarlo abierto")) {
+                        window.cerrandoMiServidor = true;
+                        cerrarServidorPropio(servidorActual, function () { location.reload(); });
+                        return;
+                    }
                 }
+                location.reload();
+            }
+
+            document.getElementById("pausaReanudar").addEventListener("click", cerrarPausa);
+            document.getElementById("pausaConfig").addEventListener("click", abrirConfigDesdePausa);
+            document.getElementById("pausaSalir").addEventListener("click", salirDelJuego);
+            document.getElementById("pausaCerrarServidor").addEventListener("click", function () {
+                if (!servidorActual) return;
+                if (!confirm("¿Cerrar el servidor? Se va a sacar a todos los jugadores.")) return;
+                window.cerrandoMiServidor = true;
+                cerrarServidorPropio(servidorActual, function (ok) {
+                    if (ok) location.reload();
+                    else window.cerrandoMiServidor = false;
+                });
+            });
+            btnConfigJuego.addEventListener("click", abrirPausa);
+
+            // Botón "atrás" del celular
+            window.addEventListener("popstate", function () {
+                if (!enJuego) return;
+                ponerEstadoAtras();
+                if (!pausado) abrirPausa();
+                else if (configAbiertaEnJuego()) volverAPausa();
+                else cerrarPausa();
             });
 
+            // Escape en la compu (si el mouse estaba capturado, el navegador lo suelta y se abre la pausa)
+            document.addEventListener("pointerlockchange", function () {
+                if (enJuego && !pausado && !document.pointerLockElement) abrirPausa();
+            });
+            window.addEventListener("keydown", function (e) {
+                if (e.key !== "Escape" || !enJuego) return;
+                if (performance.now() - tPausa < 300) return;
+                if (!pausado) abrirPausa();
+                else if (configAbiertaEnJuego()) volverAPausa();
+                else cerrarPausa();
+            });
+
+            // ===== CERRAR SERVIDORES PROPIOS =====
+            const CLAVE_TOKENS = "rainster_mis_servidores";
+            let servidorActual = null;
+
+            function leerTokens() {
+                try { return JSON.parse(localStorage.getItem(CLAVE_TOKENS)) || {}; } catch (e) { return {}; }
+            }
+            function escribirTokens(t) {
+                try { localStorage.setItem(CLAVE_TOKENS, JSON.stringify(t)); } catch (e) {}
+            }
+            function guardarToken(id, token) {
+                const t = leerTokens();
+                t[id] = token;
+                escribirTokens(t);
+            }
+            function olvidarToken(id) {
+                const t = leerTokens();
+                delete t[id];
+                escribirTokens(t);
+            }
+
+            function cerrarServidorPropio(id, alTerminar) {
+                const token = leerTokens()[id];
+                if (!token) { alTerminar(false); return; }
+                fetch("/api/servidores/cerrar", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ id: id, token: token })
+                })
+                    .then(function (r) {
+                        if (r.ok || r.status === 404) olvidarToken(id);
+                        alTerminar(r.ok);
+                    })
+                    .catch(function () {
+                        mostrarAviso("No se pudo conectar con el servidor");
+                        alTerminar(false);
+                    });
+            }
+
+        })();
+    </script>
+
+<script>
+        // ===== AJUSTES: sensibilidad, sonidos y controles =====
+        (function () {
+            if (!window.Ajustes) return;
+            const A = window.Ajustes.datos;
+            const guardar = function () { window.Ajustes.guardar(); };
+            const esCelu = "ontouchstart" in window;
+            const $ = function (id) { return document.getElementById(id); };
+
+            // Secciones que se abren y cierran con el +
+            document.querySelectorAll(".seccion").forEach(function (boton) {
+                boton.addEventListener("click", function () {
+                    const cuerpo = document.getElementById(boton.dataset.sec);
+                    const abrir = cuerpo.hidden;
+                    document.querySelectorAll(".seccionCuerpo").forEach(function (c) { c.hidden = true; });
+                    document.querySelectorAll(".seccion .mas").forEach(function (m) { m.textContent = "+"; });
+                    cuerpo.hidden = !abrir;
+                    boton.querySelector(".mas").textContent = abrir ? "−" : "+";
+                });
+            });
+
+            // Sonido de prueba para escuchar el volumen
+            let audio = null;
+            function pitido() {
+                const vol = window.Ajustes.volumenFinal();
+                if (vol <= 0) return;
+                try {
+                    audio = audio || new (window.AudioContext || window.webkitAudioContext)();
+                    const o = audio.createOscillator();
+                    const g = audio.createGain();
+                    o.frequency.value = 440;
+                    g.gain.value = 0.2 * vol;
+                    o.connect(g);
+                    g.connect(audio.destination);
+                    o.start();
+                    o.stop(audio.currentTime + 0.15);
+                } catch (e) {}
+            }
+
+            function porcentaje(v) { return Math.round(v * 100) + "%"; }
+
+            // Deslizadores
+            function deslizador(id, clave, alSoltar) {
+                const barra = $(id);
+                const valor = $(id + "V");
+                barra.value = A[clave];
+                valor.textContent = porcentaje(A[clave]);
+                barra.addEventListener("input", function () {
+                    A[clave] = parseFloat(barra.value);
+                    valor.textContent = porcentaje(A[clave]);
+                    guardar();
+                });
+                if (alSoltar) barra.addEventListener("change", alSoltar);
+            }
+            deslizador("ajSensMouse", "sensMouse");
+            deslizador("ajSensDedo", "sensDedo");
+            deslizador("ajVolumen", "volumen", pitido);
+
+            // Botones de sí / no
+            function interruptor(id, clave, alCambiar) {
+                const b = $(id);
+                function pintar() {
+                    b.textContent = A[clave] ? "Sí" : "No";
+                    b.classList.toggle("activo", !!A[clave]);
+                }
+                pintar();
+                b.addEventListener("click", function () {
+                    A[clave] = !A[clave];
+                    guardar();
+                    pintar();
+                    if (alCambiar) alCambiar();
+                });
+                return pintar;
+            }
+            interruptor("ajSilencio", "silencio", pitido);
+            const pintarInvertir = interruptor("ajInvertir", "invertirY");
+
+            // Teclas
+            const ACCIONES = [
+                ["adelante", "Adelante"],
+                ["atras", "Atrás"],
+                ["izquierda", "Izquierda"],
+                ["derecha", "Derecha"],
+                ["saltar", "Saltar"],
+                ["correr", "Correr"]
+            ];
+            const NOMBRES = {
+                Space: "Espacio", ShiftLeft: "Shift izq.", ShiftRight: "Shift der.",
+                ControlLeft: "Ctrl izq.", ControlRight: "Ctrl der.", AltLeft: "Alt izq.",
+                AltRight: "Alt der.", Tab: "Tab", Enter: "Enter", Backspace: "Retroceso",
+                ArrowUp: "↑", ArrowDown: "↓", ArrowLeft: "←", ArrowRight: "→"
+            };
+            function nombreTecla(codigo) {
+                if (NOMBRES[codigo]) return NOMBRES[codigo];
+                if (codigo.indexOf("Key") === 0) return codigo.slice(3);
+                if (codigo.indexOf("Digit") === 0) return codigo.slice(5);
+                return codigo;
+            }
+
+            const cajaTeclas = $("ajTeclas");
+            let esperando = false;
+
+            function dibujarTeclas() {
+                cajaTeclas.innerHTML = "";
+                if (esCelu) {
+                    const p = document.createElement("p");
+                    p.className = "vacio";
+                    p.style.margin = "0.4rem 0";
+                    p.textContent = "Izquierda: mover · Derecha: mirar";
+                    cajaTeclas.appendChild(p);
+                    return;
+                }
+                ACCIONES.forEach(function (par) {
+                    const fila = document.createElement("div");
+                    fila.className = "fila";
+                    const et = document.createElement("span");
+                    et.className = "filaEtiqueta";
+                    et.textContent = par[1];
+                    const b = document.createElement("button");
+                    b.className = "tecla";
+                    b.textContent = nombreTecla(A.teclas[par[0]]);
+                    b.addEventListener("click", function () { esperarTecla(par[0], b); });
+                    fila.appendChild(et);
+                    fila.appendChild(b);
+                    cajaTeclas.appendChild(fila);
+                });
+            }
+
+            function esperarTecla(accion, boton) {
+                if (esperando) return;
+                esperando = true;
+                boton.textContent = "Presioná una tecla...";
+                function alPresionar(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    document.removeEventListener("keydown", alPresionar, true);
+                    esperando = false;
+                    if (e.code !== "Escape") {
+                        // si otra acción ya usaba esa tecla, se intercambian
+                        for (const otra in A.teclas) {
+                            if (otra !== accion && A.teclas[otra] === e.code) A.teclas[otra] = A.teclas[accion];
+                        }
+                        A.teclas[accion] = e.code;
+                        guardar();
+                    }
+                    dibujarTeclas();
+                }
+                document.addEventListener("keydown", alPresionar, true);
+            }
+
+            $("ajRestablecer").addEventListener("click", function () {
+                window.Ajustes.restablecerControles();
+                pintarInvertir();
+                dibujarTeclas();
+            });
+
+            dibujarTeclas();
         })();
     </script>
 

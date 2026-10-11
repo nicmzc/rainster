@@ -184,6 +184,49 @@ if (!gl) {
         return false;
     }
 
+    // ===== AJUSTES (se guardan en el dispositivo) =====
+    const AJUSTES_BASE = {
+        sensMouse: 1,
+        sensDedo: 1,
+        volumen: 1,
+        silencio: false,
+        invertirY: false,
+        teclas: {
+            adelante: "KeyW",
+            atras: "KeyS",
+            izquierda: "KeyA",
+            derecha: "KeyD",
+            saltar: "Space",
+            correr: "ShiftLeft"
+        }
+    };
+
+    window.Ajustes = (function () {
+        const datos = JSON.parse(JSON.stringify(AJUSTES_BASE));
+        try {
+            const guardado = JSON.parse(localStorage.getItem("rainster_ajustes"));
+            if (guardado) {
+                Object.assign(datos, guardado);
+                datos.teclas = Object.assign({}, AJUSTES_BASE.teclas, guardado.teclas || {});
+            }
+        } catch (e) {}
+        return {
+            datos: datos,
+            guardar: function () {
+                try { localStorage.setItem("rainster_ajustes", JSON.stringify(datos)); } catch (e) {}
+            },
+            restablecerControles: function () {
+                datos.teclas = Object.assign({}, AJUSTES_BASE.teclas);
+                datos.invertirY = false;
+                this.guardar();
+            },
+            volumenFinal: function () {
+                return datos.silencio ? 0 : datos.volumen;
+            }
+        };
+    })();
+    const A = window.Ajustes.datos;
+
     // ===== CONTROLES =====
     const teclas = {};
 
@@ -201,8 +244,8 @@ if (!gl) {
 
     document.addEventListener("mousemove", function (e) {
         if (document.pointerLockElement !== canvas) return;
-        yaw -= e.movementX * 0.002;
-        pitch -= e.movementY * 0.002;
+        yaw -= e.movementX * 0.002 * A.sensMouse;
+        pitch -= e.movementY * 0.002 * A.sensMouse * (A.invertirY ? -1 : 1);
         pitch = Math.max(-1.5, Math.min(1.5, pitch));
     });
 
@@ -241,8 +284,8 @@ if (!gl) {
                 joyAdelante = Math.max(-1, Math.min(1, (inicioY - t.clientY) / 60));
             }
             if (t.identifier === dedoMirar) {
-                yaw -= (t.clientX - miraX) * 0.005;
-                pitch -= (t.clientY - miraY) * 0.005;
+                yaw -= (t.clientX - miraX) * 0.005 * A.sensDedo;
+                pitch -= (t.clientY - miraY) * 0.005 * A.sensDedo * (A.invertirY ? -1 : 1);
                 pitch = Math.max(-1.5, Math.min(1.5, pitch));
                 miraX = t.clientX;
                 miraY = t.clientY;
@@ -265,6 +308,14 @@ if (!gl) {
 
     canvas.addEventListener("touchend", soltarDedo);
     canvas.addEventListener("touchcancel", soltarDedo);
+    // Suelta todas las teclas y dedos (para cuando se abre la pausa)
+    window.soltarControles = function () {
+        for (const k in teclas) teclas[k] = false;
+        joyAdelante = 0;
+        joyLado = 0;
+        dedoMover = null;
+        dedoMirar = null;
+    };
 
     // Cartel de ayuda
     const ayuda = document.createElement("div");
@@ -278,7 +329,7 @@ if (!gl) {
         "Mouse: mirar<br>" +
         "Flechas: mirar con el teclado<br>" +
         "Shift: correr<br>" +
-        "Esc: soltar el mouse";
+        "Esc: pausa"
     document.body.appendChild(ayuda); 
     if ("ontouchstart" in window) {
         ayuda.innerHTML = "Izquierda: mover<br>Derecha: mirar";
@@ -392,6 +443,7 @@ if (!gl) {
         window.desconectarServidor();
         let entro = false;
         let fallo = false;
+        let cerradoPorHost = false;
 
         function fallar(motivo) {
             if (fallo || entro) return;
@@ -419,6 +471,11 @@ if (!gl) {
                 if (mensaje.tipo === "hola") { miId = mensaje.id; entro = true; alEntrar(); }
                 if (mensaje.tipo === "error") fallar(mensaje.motivo);
                 if (mensaje.tipo === "jugadores") otros = mensaje.jugadores;
+                if (mensaje.tipo === "cerrado") {
+                    cerradoPorHost = true;
+                    if (!window.cerrandoMiServidor) alert("El host cerró el servidor");
+                    location.reload();
+                }
             } catch (error) {}
         };
 
@@ -427,6 +484,7 @@ if (!gl) {
         };
 
         ws.onclose = function () {
+            if (cerradoPorHost) return;
             if (!entro) { fallar("No se pudo conectar al servidor"); return; }
             alert("Se perdió la conexión con el servidor");
             location.reload();
@@ -482,6 +540,12 @@ if (!gl) {
     function animar(ahora) {
         const dt = Math.min((ahora - anterior) / 1000, 0.05);
         anterior = ahora;
+       
+        // En pausa el juego queda quieto
+        if (window.juegoPausado) {
+            requestAnimationFrame(animar);
+            return;
+        }
 
         // Mirar con las flechas
         if (teclas["ArrowLeft"]) yaw += 1.8 * dt;
@@ -490,16 +554,18 @@ if (!gl) {
         if (teclas["ArrowDown"]) pitch -= 1.5 * dt;
         pitch = Math.max(-1.5, Math.min(1.5, pitch));
 
-        // Moverse
+       // Moverse
+        const K = A.teclas;
         let adelante = 0;
         let lado = 0;
-        if (teclas["KeyW"]) adelante += 1;
-        if (teclas["KeyS"]) adelante -= 1;
-        if (teclas["KeyD"]) lado += 1;
-        if (teclas["KeyA"]) lado -= 1; adelante += joyAdelante;
-                                           lado += joyLado;
+        if (teclas[K.adelante]) adelante += 1;
+        if (teclas[K.atras]) adelante -= 1;
+        if (teclas[K.derecha]) lado += 1;
+        if (teclas[K.izquierda]) lado -= 1;
+        adelante += joyAdelante;
+        lado += joyLado;
 
-        const velocidad = (teclas["ShiftLeft"] || correrCelu) ? 6 : 3;
+        const velocidad = (teclas[K.correr] || correrCelu) ? 6 : 3;
         const seno = Math.sin(yaw);
         const coseno = Math.cos(yaw);
 
@@ -509,7 +575,7 @@ if (!gl) {
         if (!choca(px + dx, pz)) px += dx;
         if (!choca(px, pz + dz)) pz += dz;
         // Saltar
-        if ((teclas["Space"] || pidioSaltar) && saltoY === 0) {
+        if ((teclas[K.saltar] || pidioSaltar) && saltoY === 0) {
             velY = 5;
         }
         pidioSaltar = false;

@@ -2,6 +2,7 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const WebSocket = require("ws");
+const crypto = require("crypto");
 
 const PUERTO = process.env.PORT || 3000;
 const permitidos = [
@@ -64,6 +65,35 @@ function responder(res, codigo, datos) {
 const servidor = http.createServer(function (req, res) {
     let pedido = req.url.split("?")[0];
 
+    if (pedido === "/api/servidores/cerrar") {
+        if (req.method !== "POST") { responder(res, 405, { error: "Método no permitido" }); return; }
+        let cuerpo = "";
+        req.on("data", function (trozo) {
+            cuerpo += trozo;
+            if (cuerpo.length > 2000) req.destroy();
+        });
+        req.on("end", function () {
+            let datos;
+            try { datos = JSON.parse(cuerpo); } catch (e) {
+                responder(res, 400, { error: "Datos inválidos" });
+                return;
+            }
+            const sala = salas[datos.id];
+            if (!sala) { responder(res, 404, { error: "Ese servidor ya no existe" }); return; }
+            if (!datos.token || datos.token !== sala.token) {
+                responder(res, 403, { error: "No sos el dueño de este servidor" });
+                return;
+            }
+            for (const cliente of sala.sockets) {
+                try { cliente.send(JSON.stringify({ tipo: "cerrado" })); } catch (e) {}
+                try { cliente.close(); } catch (e) {}
+            }
+            delete salas[datos.id];
+            responder(res, 200, { ok: true });
+        });
+        return;
+    }
+
     if (pedido === "/api/servidores") {
         const ip = ipDe(req);
 
@@ -112,10 +142,11 @@ const servidor = http.createServer(function (req, res) {
                 }
                 const id = "s" + (siguienteSala++);
                 salas[id] = {
-                    id: id, nombre: nombre, host: host, tipo: tipo, max: max, ip: ip,
+                    id: id, token: crypto.randomBytes(16).toString("hex"),
+                    nombre: nombre, host: host, tipo: tipo, max: max, ip: ip,
                     jugadores: {}, sockets: new Set(), creada: Date.now(), vacioDesde: Date.now()
                 };
-                responder(res, 200, { id: id });
+                responder(res, 200, { id: id, token: salas[id].token });
             });
             return;
         }

@@ -1,4 +1,4 @@
-const CACHE = "rainster-v2";
+const CACHE = "rainster-v3";
 const ARCHIVOS = [
     "/",
     "/rainster.html",

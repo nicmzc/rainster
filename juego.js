@@ -393,7 +393,7 @@ if (!gl) {
         "C: agacharte · Z: arrastrarte<br>" +
         "F o click: pegar<br>" +
         "E: recoger / dormir (cerca de la cama) · Q: tirar<br>" +
-        "I: inventario · 1-7: barra rápida<br>" +
+        "I: inventario · 1-7: barra rápida · B: bailar<br>" +
         "Esc: pausa"
     document.body.appendChild(ayuda); 
     if ("ontouchstart" in window) {
@@ -578,7 +578,7 @@ if (!gl) {
 
             // estado propio de cada jugador visto desde acá (cuerpo que sigue a la cabeza, fase del paso, golpe)
             let an = animOtros[id];
-            if (!an) an = animOtros[id] = { g: j.g || 0, t0: -9, cuerpo: j.yaw || 0, fase: 0, mov: 0, ult: ahoraS, x: j.x, z: j.z, vel: 0 };
+            if (!an) an = animOtros[id] = { g: j.g || 0, t0: -9, cuerpo: j.yaw || 0, fase: 0, mov: 0, ult: ahoraS, x: j.x, z: j.z, vel: 0, ba: "", bt0: ahoraS };
             const dt = Math.min(0.1, Math.max(0, ahoraS - an.ult));
             an.ult = ahoraS;
             if (dt > 0) {
@@ -593,12 +593,17 @@ if (!gl) {
                 if (Math.abs(d) > LIM) { an.cuerpo += d - Math.sign(d) * LIM; d = angDif(j.yaw, an.cuerpo); }
                 an.cuerpo += d * Math.min(1, dt * (an.mov > 0.1 ? 8 : 1.5));
             }
+            // baile: el tiempo se cuenta desde que lo vemos empezar
+            if ((j.ba || "") !== an.ba) { an.ba = j.ba || ""; an.bt0 = ahoraS; }
             // golpe: cuando cambia su contador se ve el manotazo
             if ((j.g || 0) !== an.g) { an.g = j.g || 0; an.t0 = ahoraS; }
 
             const est = {
                 base: hexARgb(j.col) || COLORES_OTROS[(j.c || 0) % COLORES_OTROS.length],
                 eq: equipoRemoto(j.q),
+                acc: accDeTexto(j.ad),
+                baile: baileValido(j.ba),
+                baileT: ahoraS - an.bt0,
                 manoD: itemValido(j.md) || (j.md === undefined ? itemValido(j.m) : null),
                 manoI: itemValido(j.mi),
                 pl: [Math.floor((j.pl || 0) / 3) % 3, (j.pl || 0) % 3],
@@ -718,6 +723,8 @@ if (!gl) {
                 pi: Math.round(pitch * 100) / 100,
                 md: inv.manoD || "", mi: inv.manoI || "",
                 q: [inv.equipo.cabeza, inv.equipo.torso, inv.equipo.piernas, inv.equipo.pies, inv.equipo.espalda].map(function (x) { return x || ""; }).join(","),
+                ad: accATexto(inv.acc),
+                ba: baile ? baile.id : "",
                 pl: sv.piernas[0].n * 3 + sv.piernas[1].n,
                 am: Math.round(animMov * 100) / 100, ac: animCorre ? 1 : 0
             }));
@@ -1508,6 +1515,13 @@ if (!gl) {
 #invCaja .iSlot.eq{border-color:rgba(255,215,220,.85);background:rgba(60,0,0,.45);}
 #invCaja .iSlot.alta{height:calc(var(--s2)*2.4);width:calc(var(--s2)*1.3);}
 #invCaja .iSlot .iEt{position:absolute;font-size:max(8px,calc(var(--s2)*.2));opacity:.55;text-align:center;line-height:1.1;pointer-events:none;}
+#invCaja .invAcc{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:6px 22px;align-items:flex-start;border-top:2px solid rgba(255,215,220,.4);padding-top:8px;}
+#invCaja .invAcc .invAccBtn{font-family:inherit;font-size:max(11px,calc(var(--s2)*.3));letter-spacing:2px;color:#e8c9c9;background:none;border:0;padding:0;cursor:pointer;text-shadow:0 0 8px #f00;}
+#invCaja .invAccGr{display:flex;flex-direction:column;gap:4px;}
+#invCaja .invAccFila{display:flex;flex-wrap:wrap;gap:4px;max-width:calc(var(--s2)*6.4);}
+#invCaja .iSlot.acc{width:calc(var(--s2)*.78);height:calc(var(--s2)*.78);font-size:calc(var(--s2)*.44);}
+#invCaja .iSlot.acc.on{border-color:#ffd54a;background:rgba(120,70,0,.6);box-shadow:0 0 10px rgba(255,200,60,.8);}
+#invCaja .iSlot.acc.nada{font-size:calc(var(--s2)*.34);opacity:.7;}
 #invCaja .invPie{grid-column:1/-1;display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;min-height:calc(var(--s2)*.8);border-top:2px solid rgba(255,215,220,.4);padding-top:8px;
  font-size:max(11px,calc(var(--s2)*.3));letter-spacing:1px;color:#d9b8b8;}
 #invCaja .invPie b{color:#fff;font-weight:normal;text-shadow:0 0 8px #f00;}
@@ -1675,6 +1689,7 @@ if (!gl) {
             e.preventDefault();
             if (inv.abierto) cerrarInventario(); else abrirInventario();
         }
+        if (e.code === "KeyB" && !inv.abierto) alternarBaile();
         if (/^Digit[1-7]$/.test(e.code)) tocarBarra(parseInt(e.code.slice(5), 10) - 1, true);
         if (DEBUG_SV) {
             if (e.code === "KeyJ") sv.sed = 100;
@@ -1715,6 +1730,86 @@ if (!gl) {
         comida: [0.80, 0.60, 0.20], jarabe: [0.40, 0.85, 0.50], anabolico: [0.90, 0.90, 0.20],
         palo: [0.55, 0.38, 0.20], cuchillo: [0.78, 0.80, 0.85], hacha: [0.52, 0.52, 0.58], muletas: [0.82, 0.80, 0.72]
     };
+    // ===== ACCESORIOS =====
+    // Son gratis e ilimitados (no ocupan lugar ni hay que buscarlos en el mapa). Se eligen desde el inventario,
+    // se ven en tu personaje y los demás jugadores te ven con ellos puestos. Hay uno por categoría.
+    const ACC_SLOTS = ["adorno", "ojos", "cara"];
+    const ACC_TIT = { adorno: "Cabeza", ojos: "Ojos", cara: "Cara" };
+    const ACC = {
+        flor_roja:     { n: "Flor roja", e: "🌹", slot: "adorno" },
+        flor_rosa:     { n: "Flor rosa", e: "🌸", slot: "adorno" },
+        flor_amarilla: { n: "Flor amarilla", e: "🌼", slot: "adorno" },
+        flor_azul:     { n: "Flor azul", e: "🪻", slot: "adorno" },
+        ramillete:     { n: "Ramillete de flores", e: "💐", slot: "adorno" },
+        corona_flores: { n: "Corona de flores", e: "🌷", slot: "adorno" },
+        mono:          { n: "Moño", e: "🎀", slot: "adorno" },
+        orejas_gato:   { n: "Orejas de gato", e: "🐱", slot: "adorno" },
+        corona:        { n: "Corona", e: "👑", slot: "adorno" },
+        pestanas:      { n: "Pestañas", e: "👁️", slot: "ojos" },
+        anteojos:      { n: "Anteojos", e: "👓", slot: "ojos" },
+        anteojos_sol:  { n: "Anteojos de sol", e: "🕶️", slot: "ojos" },
+        rubor:         { n: "Rubor", e: "😊", slot: "cara" },
+        pecas:         { n: "Pecas", e: "✨", slot: "cara" },
+        bigote:        { n: "Bigote", e: "🥸", slot: "cara" }
+    };
+    // Los accesorios son de la persona, no de la partida: se guardan aparte y se ven también en los servidores online
+    const CLAVE_ACC = "rainster_accesorios";
+    function guardarAcc() { try { localStorage.setItem(CLAVE_ACC, accATexto(inv.acc)); } catch (e) {} }
+    function cargarAcc() {
+        let q = "";
+        try { q = localStorage.getItem(CLAVE_ACC) || ""; } catch (e) {}
+        inv.acc = accDeTexto(q);
+    }
+    function accValido(id, slot) { return typeof id === "string" && ACC[id] && ACC[id].slot === slot ? id : null; }
+    // lo que mandamos por la red: "adorno,ojos,cara"
+    function accATexto(a) { return ACC_SLOTS.map(function (k) { return (a && a[k]) || ""; }).join(","); }
+    function accDeTexto(q) {
+        const r = {};
+        if (typeof q !== "string") return r;
+        const partes = q.split(",");
+        ACC_SLOTS.forEach(function (k, i) { const id = accValido(partes[i], k); if (id) r[k] = id; });
+        return r;
+    }
+    // ===== BAILES =====
+    // Gratis. Se eligen en el inventario o con la tecla B. Se cortan solos si te movés, saltás, te agachás o peleás.
+    // Cada baile devuelve la pose según el tiempo t (en segundos): ai/ad = brazo izq./der. (negativo = hacia adelante y arriba),
+    // p = giro de cada pierna, oy = salto, giro = vuelta completa del cuerpo, tw = giro de arriba del cuerpo, cab = cabeceo.
+    const BAILES = {
+        movete: { n: "Movete", e: "🕺", f: function (t) {
+            const s = Math.sin(t * 8);
+            return { ai: -2.6 + 0.6 * s, ad: -2.6 - 0.6 * s, p: [0.35 * s, -0.35 * s], oy: 0.04 * Math.abs(s), tw: 0.25 * Math.sin(t * 4), cab: 0.15 * Math.sin(t * 8) };
+        } },
+        giro: { n: "Giro", e: "💃", f: function (t) {
+            return { ai: -2.8, ad: -2.8, p: [0.3 * Math.sin(t * 10), -0.3 * Math.sin(t * 10)], oy: 0.03 * Math.abs(Math.sin(t * 5)), giro: t * 5 };
+        } },
+        robot: { n: "Robot", e: "🤖", f: function (t) {
+            const q = Math.floor(t * 2.5) % 4;
+            return { ai: [-1.57, 0, -1.57, -3][q], ad: [0, -1.57, -3, -1.57][q], p: [0, 0], tw: [0.6, 0, -0.6, 0][q], cab: [0.3, 0, -0.3, 0][q] };
+        } },
+        saltitos: { n: "Saltitos", e: "🦘", f: function (t) {
+            const s = Math.sin(t * 6);
+            return { ai: -3 + 0.3 * Math.sin(t * 12), ad: -3 - 0.3 * Math.sin(t * 12), p: [-0.35 * Math.abs(s), -0.35 * Math.abs(s)], oy: 0.3 * Math.abs(s) };
+        } },
+        twist: { n: "Twist", e: "🌀", f: function (t) {
+            const s = Math.sin(t * 6);
+            return { ai: -0.8 + 0.8 * s, ad: -0.8 - 0.8 * s, p: [0, 0], tw: 0.7 * s, oy: 0.02 * Math.abs(s) };
+        } },
+        pasitos: { n: "Pasitos", e: "🦵", f: function (t) {
+            const s = Math.sin(t * 6);
+            return { ai: -0.9 * s, ad: 0.9 * s, p: [-0.9 * Math.max(0, s), -0.9 * Math.max(0, -s)], oy: 0.03 * Math.abs(s), tw: 0.15 * s };
+        } }
+    };
+    const BAILE_ORDEN = ["movete", "giro", "robot", "saltitos", "twist", "pasitos"];
+    let baile = null;              // { id, t0 } mientras bailás
+    let ultimoBaile = "movete";
+    function empezarBaile(id) {
+        if (!BAILES[id]) return;
+        baile = { id: id, t0: performance.now() / 1000 };
+        ultimoBaile = id;
+    }
+    function pararBaile() { baile = null; }
+    function alternarBaile() { if (baile) pararBaile(); else empezarBaile(ultimoBaile); }
+    function baileValido(id) { return typeof id === "string" && BAILES[id] ? id : ""; }
     const ETIQ_EQUIPO = { cabeza: "Cabeza", torso: "Torso", piernas: "Piernas", pies: "Pies", espalda: "Mochila" };
     const TIT_CONT = { espalda: "Mochila", torso: "Camisa (Bolsillo)", piernas: "Pantalón (Bolsillo)" };
     const ORDEN_CONT = ["espalda", "piernas", "torso"];
@@ -1742,6 +1837,7 @@ if (!gl) {
     const inv = {
         barra: new Array(BARRA_N).fill(null),
         equipo: {},      // cabeza, torso, piernas, pies, espalda -> id
+        acc: {},         // accesorios gratis: adorno, ojos, cara -> id
         cont: {},        // espalda, torso, piernas -> lista de huecos
         mundo: [],
         sel: null,       // hueco seleccionado dentro del inventario
@@ -1751,6 +1847,7 @@ if (!gl) {
         abierto: false
     };
     window.inventarioAbierto = false;
+    let invAccAbierto = true;      // lista de accesorios desplegada
 
     // Objeto que tenés en la mano (o null)
     function itemMano() {
@@ -2078,6 +2175,9 @@ if (!gl) {
         return {
             base: hexARgb(A.colorPersonaje) || COLORES_JUGADOR[((mio && mio.c) || 0) % COLORES_JUGADOR.length],
             eq: inv.equipo,
+            acc: inv.acc,
+            baile: baile ? baile.id : "",
+            baileT: baile ? performance.now() / 1000 - baile.t0 : 0,
             manoD: inv.manoD,
             manoI: inv.manoI,
             pl: [sv.piernas[0].n, sv.piernas[1].n],
@@ -2143,12 +2243,79 @@ if (!gl) {
             cabeza.push(add(0, 1.6, 1.7, 0, 0.6, 0.4, base));
         }
         cabeza.push(add(0, 1.35, 1.6, 0.3, 0.4, 0.3, VISTA_CARA));                                 // lo blanco (cara)
+        // Accesorios gratis (se pegan a la cabeza: giran y se inclinan con ella)
+        const acc = e.acc || {};
+        const yTope = gorra ? 1.74 : 1.7;                                    // arriba de la cabeza (con gorra, arriba de la gorra)
+        const ac = function (x, y1, y2, z, ancho, largo, c) { const b = add(x, y1, y2, z, ancho, largo, c); cabeza.push(b); return b; };
+        const ZC = 0.455;                                                    // justo delante de la cara
+        const flor = function (x, z, k, petalo, centro) {
+            ac(x, yTope, yTope + 0.05 * k, z, 0.24 * k, 0.08 * k, petalo);
+            ac(x, yTope, yTope + 0.05 * k, z, 0.08 * k, 0.24 * k, petalo);
+            ac(x, yTope, yTope + 0.09 * k, z, 0.09 * k, 0.09 * k, centro);
+        };
+        const AMARILLO = [0.98, 0.85, 0.2], ROSA = [0.98, 0.5, 0.7];
+        if (acc.adorno === "flor_roja") flor(0.18, 0.04, 1, [0.85, 0.1, 0.15], AMARILLO);
+        else if (acc.adorno === "flor_rosa") flor(0.18, 0.04, 1, ROSA, AMARILLO);
+        else if (acc.adorno === "flor_amarilla") flor(0.18, 0.04, 1, AMARILLO, [0.6, 0.35, 0.1]);
+        else if (acc.adorno === "flor_azul") flor(0.18, 0.04, 1, [0.35, 0.5, 0.98], [0.98, 0.98, 0.9]);
+        else if (acc.adorno === "ramillete") {
+            flor(0.2, 0.06, 0.8, [0.85, 0.1, 0.15], AMARILLO);
+            flor(-0.04, -0.08, 0.8, [0.98, 0.98, 0.95], AMARILLO);
+            flor(-0.22, 0.05, 0.8, [0.6, 0.4, 0.95], AMARILLO);
+        } else if (acc.adorno === "corona_flores") {
+            const pts = [[-0.3, 0.2], [0, 0.22], [0.3, 0.2], [0.32, 0], [0.3, -0.2], [0, -0.22], [-0.3, -0.2], [-0.32, 0]];
+            const cols = [ROSA, [0.98, 0.98, 0.95], AMARILLO, [0.6, 0.4, 0.95]];
+            pts.forEach(function (p, i) { ac(p[0], yTope - 0.03, yTope + 0.07, p[1], 0.11, 0.11, cols[i % cols.length]); });
+        } else if (acc.adorno === "mono") {
+            const col = [0.95, 0.3, 0.5];
+            ac(0.07, yTope, yTope + 0.1, 0.1, 0.14, 0.1, col);
+            ac(0.29, yTope, yTope + 0.1, 0.1, 0.14, 0.1, col);
+            ac(0.18, yTope, yTope + 0.12, 0.1, 0.08, 0.1, oscurecer(col, 0.7));
+        } else if (acc.adorno === "orejas_gato") {
+            for (const sg of [-1, 1]) {
+                ac(sg * 0.2, yTope, yTope + 0.16, -0.02, 0.15, 0.12, oscurecer(base, 0.85));
+                ac(sg * 0.2, yTope + 0.16, yTope + 0.22, -0.02, 0.08, 0.08, oscurecer(base, 0.85));
+                ac(sg * 0.2, yTope, yTope + 0.12, 0.05, 0.07, 0.02, ROSA);
+            }
+        } else if (acc.adorno === "corona") {
+            const oro = [0.95, 0.78, 0.2];
+            ac(0, yTope, yTope + 0.06, 0, 0.66, 0.46, oro);
+            for (const p of [[-0.27, 0.18], [0, 0.19], [0.27, 0.18], [-0.27, -0.18], [0, -0.19], [0.27, -0.18]]) ac(p[0], yTope + 0.06, yTope + 0.17, p[1], 0.09, 0.09, oro);
+            ac(0, yTope + 0.01, yTope + 0.05, 0.235, 0.07, 0.02, [0.85, 0.1, 0.2]);
+        }
+        const gafas = function (lente, marco) {
+            for (const sg of [-1, 1]) {
+                ac(sg * 0.1, 1.42, 1.55, ZC, 0.15, 0.02, marco);
+                ac(sg * 0.1, 1.44, 1.53, ZC + 0.012, 0.11, 0.02, lente);
+                ac(sg * 0.215, 1.49, 1.52, 0.31, 0.03, 0.3, marco);
+            }
+            ac(0, 1.49, 1.51, ZC, 0.06, 0.02, marco);
+        };
+        if (acc.ojos === "pestanas") {
+            for (const sg of [-1, 1]) {
+                ac(sg * 0.1, 1.45, 1.51, ZC, 0.07, 0.02, [0.08, 0.08, 0.12]);                 // ojo
+                ac(sg * 0.1, 1.51, 1.54, ZC, 0.11, 0.02, [0.05, 0.05, 0.08]);                 // línea de pestañas
+                ac(sg * 0.17, 1.51, 1.58, ZC, 0.03, 0.02, [0.05, 0.05, 0.08]);                // pestaña que sale hacia afuera
+                ac(sg * 0.125, 1.54, 1.575, ZC, 0.025, 0.02, [0.05, 0.05, 0.08]);             // pestaña de arriba
+            }
+        } else if (acc.ojos === "anteojos") gafas([0.75, 0.9, 1.0], [0.12, 0.12, 0.15]);
+        else if (acc.ojos === "anteojos_sol") gafas([0.04, 0.04, 0.06], [0.04, 0.04, 0.06]);
+        if (acc.cara === "rubor") {
+            for (const sg of [-1, 1]) ac(sg * 0.13, 1.38, 1.43, ZC, 0.09, 0.02, [0.98, 0.5, 0.6]);
+        } else if (acc.cara === "pecas") {
+            for (const sg of [-1, 1]) for (const p of [[0.09, 1.4], [0.14, 1.42], [0.15, 1.38], [0.11, 1.37]]) ac(sg * p[0], p[1], p[1] + 0.025, ZC, 0.025, 0.02, [0.6, 0.38, 0.25]);
+        } else if (acc.cara === "bigote") {
+            const c = [0.2, 0.1, 0.05];
+            ac(0, 1.395, 1.435, ZC, 0.24, 0.02, c);
+            for (const sg of [-1, 1]) ac(sg * 0.11, 1.37, 1.395, ZC, 0.04, 0.02, c);
+        }
         if (mochila) {
             add(0, 0.75, 1.4, -0.34, 0.44, 0.24, mochila);
             add(0, 0.85, 1.05, -0.47, 0.3, 0.04, oscurecer(mochila, 1.3));                         // bolsillo
         }
         // brazos: dos barras largas a los costados del torso (un poco más largas y anchas)
         const colBrazo = camisa || base;
+        const bd = e.baile && BAILES[e.baile] && e.postura === 0 ? BAILES[e.baile].f(e.baileT || 0) : null;
         const brazos = { "-1": add(-0.4, 0.62, 1.33, 0, 0.16, 0.22, colBrazo), "1": add(0.4, 0.62, 1.33, 0, 0.16, 0.22, colBrazo) };
         // lo que tenés en las manos: la derecha se ve a la izquierda de frente, la izquierda a la derecha
         if (e.manoD === "muletas" || e.manoI === "muletas") {
@@ -2184,6 +2351,7 @@ if (!gl) {
             const amp = e.postura === 2 ? 0.7 : (libre ? (e.corre ? 0.9 : 0.55) : 0.1);
             if (e.postura === 2) ang = -2.2;                      // arrastrándote: los brazos van estirados hacia adelante, por el piso
             ang += (sd === 1 ? -1 : 1) * amp * balanceo;       // los brazos se balancean al revés que las piernas (arrastrándote: se estiran y se encogen)
+            if (bd) ang = sd === 1 ? bd.ai : bd.ad;
             if (ang !== 0) grupo.forEach(function (b) { b.r = [[ang, 1.28, 0]]; });
         });
         // Piernas: se balancean al caminar (la lastimada, menos)
@@ -2191,11 +2359,12 @@ if (!gl) {
         L.forEach(function (b) {
             if (b.pi === undefined) return;
             const flojo = pl[b.pi] > 0 ? 0.4 : 1;
-            const a = (b.pi === 0 ? 1 : -1) * ampP * flojo * balanceo;
+            let a = (b.pi === 0 ? 1 : -1) * ampP * flojo * balanceo;
+            if (bd) a = bd.p[b.pi] * flojo;
             if (a !== 0) b.r = [[a, 0.7, 0]];
         });
         // Cabeza: sube y baja con hacia dónde mirás, y gira a los costados (el cuerpo la sigue de a poco)
-        const cabeceo = Math.max(-0.95, Math.min(0.95, -e.pitch * 0.65)) + (e.postura === 2 ? -1.35 : 0);   // arrastrándote la cabeza se levanta para mirar al frente
+        const cabeceo = Math.max(-0.95, Math.min(0.95, -e.pitch * 0.65)) + (e.postura === 2 ? -1.35 : 0) + (bd && bd.cab ? bd.cab : 0);   // arrastrándote la cabeza se levanta para mirar al frente
         const giroCab = Math.max(-0.9, Math.min(0.9, e.giroCab));
         cabeza.forEach(function (b) { b.cab = true; b.r = [[cabeceo, 1.35, 0]]; });
         // posturas: agachado (inclinado hacia adelante) y arrastrándote (acostado boca abajo, cabeza a la derecha)
@@ -2215,6 +2384,13 @@ if (!gl) {
         const giroCuerpo = e.giroCuerpo;
         const culebreo = e.postura === 2 ? 0.16 * balanceo : 0;      // arrastrándote el cuerpo serpentea de lado a lado
         L.forEach(function (b) { b.ya = giroCuerpo + culebreo + (b.cab ? giroCab : 0); });
+        if (bd) {
+            // baile: vuelta del cuerpo entero, giro de la parte de arriba (las piernas quedan) y saltitos
+            L.forEach(function (b) {
+                b.ya += (bd.giro || 0) + (b.pi === undefined && bd.tw ? bd.tw : 0);
+                if (bd.oy) b.oy = (b.oy || 0) + bd.oy;
+            });
+        }
         return L;
     }
 
@@ -2463,6 +2639,74 @@ if (!gl) {
         }
         caja.appendChild(conts);
 
+        // Accesorios gratis: flores, pestañas y más (los demás jugadores te ven con ellos)
+        const bloqueAcc = document.createElement("div");
+        bloqueAcc.className = "invAcc";
+        const tAcc = document.createElement("button");
+        tAcc.className = "invAccBtn";
+        tAcc.textContent = (invAccAbierto ? "▾" : "▸") + " ACCESORIOS Y BAILES GRATIS";
+        tAcc.addEventListener("click", function () { invAccAbierto = !invAccAbierto; pintarInventario(); });
+        if (!invAccAbierto) {
+            bloqueAcc.appendChild(tAcc);
+        } else {
+            const cab = document.createElement("div");
+            cab.style.cssText = "flex-basis:100%;";
+            cab.appendChild(tAcc);
+            bloqueAcc.appendChild(cab);
+            ACC_SLOTS.forEach(function (k) {
+                const gr = document.createElement("div");
+                gr.className = "invAccGr";
+                gr.innerHTML = '<div class="invTit">' + ACC_TIT[k] + "</div>";
+                const fila = document.createElement("div");
+                fila.className = "invAccFila";
+                const ninguno = document.createElement("div");
+                ninguno.className = "iSlot eq acc nada" + (inv.acc[k] ? "" : " on");
+                ninguno.textContent = "✕";
+                ninguno.title = "Sin accesorio";
+                ninguno.addEventListener("click", function () { delete inv.acc[k]; guardarAcc(); refrescarInventario(); });
+                fila.appendChild(ninguno);
+                Object.keys(ACC).filter(function (id) { return ACC[id].slot === k; }).forEach(function (id) {
+                    const b = document.createElement("div");
+                    b.className = "iSlot eq acc" + (inv.acc[k] === id ? " on" : "");
+                    b.textContent = ACC[id].e;
+                    b.title = ACC[id].n;
+                    b.addEventListener("click", function () {
+                        if (inv.acc[k] === id) delete inv.acc[k]; else inv.acc[k] = id;
+                        guardarAcc();
+                        refrescarInventario();
+                    });
+                    fila.appendChild(b);
+                });
+                gr.appendChild(fila);
+                bloqueAcc.appendChild(gr);
+            });
+            const grB = document.createElement("div");
+            grB.className = "invAccGr";
+            grB.innerHTML = '<div class="invTit">Bailes (tecla B)</div>';
+            const filaB = document.createElement("div");
+            filaB.className = "invAccFila";
+            const parar = document.createElement("div");
+            parar.className = "iSlot eq acc nada" + (baile ? "" : " on");
+            parar.textContent = "✕";
+            parar.title = "Dejar de bailar";
+            parar.addEventListener("click", function () { pararBaile(); refrescarInventario(); });
+            filaB.appendChild(parar);
+            BAILE_ORDEN.forEach(function (id) {
+                const b = document.createElement("div");
+                b.className = "iSlot eq acc" + (baile && baile.id === id ? " on" : "");
+                b.textContent = BAILES[id].e;
+                b.title = BAILES[id].n;
+                b.addEventListener("click", function () {
+                    if (baile && baile.id === id) pararBaile(); else empezarBaile(id);
+                    refrescarInventario();
+                });
+                filaB.appendChild(b);
+            });
+            grB.appendChild(filaB);
+            bloqueAcc.appendChild(grB);
+        }
+        caja.appendChild(bloqueAcc);
+
         // Pie: info del objeto elegido y acciones
         const pie = document.createElement("div");
         pie.className = "invPie";
@@ -2640,6 +2884,7 @@ if (!gl) {
     function iniciarInventario(datos) {
         inv.barra = new Array(BARRA_N).fill(null);
         inv.equipo = {};
+        cargarAcc();
         inv.cont = {};
         inv.sel = null;
         inv.barraSel = -1;
@@ -3264,6 +3509,7 @@ if (!gl) {
         // Ruido que hacés: de pie corriendo se oye lejos, agachado poco, arrastrándote casi nada
         const seMueve = adelante !== 0 || lado !== 0;
         animCorre = !!corre;
+        if (baile && (seMueve || postura !== 0 || saltoY > 0 || modoPelea || sv.durmiendo || !sv.vivo)) pararBaile();
         animMov += ((seMueve && sv.vivo && !sv.durmiendo ? 1 : 0) - animMov) * Math.min(1, dt * 8);
         if (seMueve) animFase += dt * (postura === 2 ? 3.5 : Math.max(2.5, Math.min(16, velocidad * 2.4)));
         const ruidoBase = !seMueve ? 0 : postura === 2 ? 1.5 : postura === 1 ? 4.5 : (corre ? 22 : 11);

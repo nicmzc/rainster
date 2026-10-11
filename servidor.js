@@ -300,6 +300,8 @@ wss.on("connection", function (socket, req) {
                     md: typeof datos.md === "string" && /^[a-z]{0,12}$/.test(datos.md) ? datos.md : "",
                     mi: typeof datos.mi === "string" && /^[a-z]{0,12}$/.test(datos.mi) ? datos.mi : "",
                     q: typeof datos.q === "string" && /^([a-z]{0,12},){4}[a-z]{0,12}$/.test(datos.q) ? datos.q : ",,,,",
+                    ad: typeof datos.ad === "string" && /^([a-z_]{0,16},){2}[a-z_]{0,16}$/.test(datos.ad) ? datos.ad : ",,",
+                    ba: typeof datos.ba === "string" && /^[a-z_]{0,12}$/.test(datos.ba) ? datos.ba : "",
                     pl: Number.isInteger(datos.pl) && datos.pl >= 0 && datos.pl <= 8 ? datos.pl : 0,
                     am: typeof datos.am === "number" ? Math.max(0, Math.min(1, datos.am)) : 0,
                     ac: datos.ac ? 1 : 0,

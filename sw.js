@@ -1,8 +1,9 @@
-const CACHE = "rainster-v1";
+const CACHE = "rainster-v2";
 const ARCHIVOS = [
     "/",
     "/rainster.html",
     "/juego.js",
+    "/estaciones.js",
     "/manifest.webmanifest",
     "/icono.rainster.png",
     "/icono.rainster2.png"

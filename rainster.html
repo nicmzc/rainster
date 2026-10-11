@@ -564,9 +564,10 @@ html {
 
             <!-- Ventana: nombre de la partida -->
             <div id="modalNombre">
-                <div class="cajaModal">
+                <div class="cajaModal" style="max-height:88vh;overflow-y:auto;">
                     <h2 class="tituloModal">Nombre de la partida</h2>
                     <input id="entradaNombre" type="text" maxlength="30" autocomplete="off">
+                    <div id="opcionesPartida"></div>
                     <div class="botonesModal">
                         <button class="enlace" id="btnCancelarNombre">Cancelar</button>
                         <button class="enlace" id="btnAceptarNombre">Crear</button>
@@ -593,6 +594,7 @@ html {
                         <button class="subpestana activa" id="tipoOnline">Online</button>
                         <button class="subpestana" id="tipoLan">LAN</button>
                     </div>
+                    <div id="opcionesServidor"></div>
                     <div class="botonesModal">
                         <button class="enlace" id="btnCancelarServidor">Cancelar</button>
                         <button class="enlace" id="btnAceptarServidor">Crear</button>
@@ -665,6 +667,7 @@ html {
 
 <div id="aviso" class="aviso"></div>
 
+    <script src="estaciones.js"></script>
     <script src="juego.js"></script>
     <script>
         if ("serviceWorker" in navigator) {
@@ -954,6 +957,28 @@ function dibujarFuego(dt, t) {
                 } catch (e) {}
             }
 
+            // Arranca las estaciones de una partida guardada (las viejas empiezan en otoño, día 1)
+            function empezarEstaciones(partida) {
+                if (!partida.reloj) {
+                    partida.reloj = Estaciones.crearReloj({ estacionInicial: "otono", inicioMs: 0 });
+                    partida.tiempoJugadoMs = 0;
+                    const lista = leerPartidas();
+                    const guardada = lista.find(function (p) { return p.id === partida.id; });
+                    if (guardada) {
+                        guardada.reloj = partida.reloj;
+                        guardada.tiempoJugadoMs = 0;
+                        guardarPartidas(lista);
+                    }
+                }
+                if (window.iniciarEstaciones) {
+                    window.iniciarEstaciones({
+                        modo: "offline",
+                        reloj: partida.reloj,
+                        tiempoJugadoMs: partida.tiempoJugadoMs || 0
+                    });
+                }
+            }
+
             // Convierte una fecha en texto, por ejemplo "10/10/2026 01:54"
             function fechaCorta(ms) {
                 const d = new Date(ms);
@@ -1030,6 +1055,7 @@ function dibujarFuego(dt, t) {
                 partida.ultima = Date.now();
                 guardarPartidas(lista);
                 partidaActual = id;
+                empezarEstaciones(partida);
                 entrarAlJuego();
             }
 
@@ -1044,22 +1070,29 @@ function dibujarFuego(dt, t) {
             }
 
             // Crea una partida nueva y entra al juego
-            function crearPartida(nombre) {
+            function crearPartida(nombre, estacionInicial) {
                 const lista = leerPartidas();
                 const ahora = Date.now();
-                const partida = { id: "p" + ahora, nombre: nombre, creada: ahora, ultima: ahora };
+                const partida = {
+                    id: "p" + ahora, nombre: nombre, creada: ahora, ultima: ahora,
+                    reloj: Estaciones.crearReloj({ estacionInicial: estacionInicial, inicioMs: 0 }),
+                    tiempoJugadoMs: 0
+                };
                 lista.push(partida);
                 guardarPartidas(lista);
                 partidaActual = partida.id;
+                empezarEstaciones(partida);
                 entrarAlJuego();
             }
 
             // Ventanita para ponerle nombre a la partida nueva
             const modalNombre = document.getElementById("modalNombre");
             const entradaNombre = document.getElementById("entradaNombre");
+            const opcionesPartida = Estaciones.montarOpciones(document.getElementById("opcionesPartida"));
 
             function abrirModalNombre() {
                 entradaNombre.value = "Partida " + (leerPartidas().length + 1);
+                opcionesPartida.reiniciar();
                 modalNombre.classList.add("visible");
                 entradaNombre.focus();
                 entradaNombre.select();
@@ -1072,7 +1105,7 @@ function dibujarFuego(dt, t) {
             function confirmarNombre() {
                 const nombre = entradaNombre.value.trim() || "Partida sin nombre";
                 cerrarModalNombre();
-                crearPartida(nombre.slice(0, 30));
+                crearPartida(nombre.slice(0, 30), opcionesPartida.obtener());
             }
 
 // ===== SERVIDORES =====
@@ -1090,15 +1123,18 @@ const buscador = document.getElementById("buscadorServidores");
 const modalServidor = document.getElementById("modalServidor");
 const entradaServidor = document.getElementById("entradaServidor");
 const entradaHost = document.getElementById("entradaHost");
+const opcionesServidor = Estaciones.montarOpciones(document.getElementById("opcionesServidor"));
 const avisoCaja = document.getElementById("aviso");
 let temporizadorAviso = null;
 
-function mostrarAviso(texto) {
+function mostrarAviso(texto, ms) {
     avisoCaja.textContent = texto;
     avisoCaja.classList.add("visible");
     clearTimeout(temporizadorAviso);
-    temporizadorAviso = setTimeout(function () { avisoCaja.classList.remove("visible"); }, 2800);
+    temporizadorAviso = setTimeout(function () { avisoCaja.classList.remove("visible"); }, ms || 2800);
 }
+
+window.mostrarAviso = mostrarAviso;
 
 function leerNombreJugador() {
     try { return localStorage.getItem("rainster_nombre") || "Jugador"; } catch (e) { return "Jugador"; }
@@ -1182,7 +1218,8 @@ function dibujarServidores() {
         nombre.textContent = s.nombre;
         const info = document.createElement("div");
         info.className = "partidaInfo";
-        info.textContent = "Host: " + s.host + "  ·  " + (s.tipo === "online" ? "Online" : "LAN");
+        info.textContent = "Host: " + s.host + "  ·  " + (s.tipo === "online" ? "Online" : "LAN") +
+            (s.estacion ? "  ·  " + s.estacion : "");
         textos.appendChild(nombre);
         textos.appendChild(info);
 
@@ -1245,6 +1282,7 @@ function abrirModalServidor() {
     maxNuevo = 10;
     actualizarCupoNuevo();
     elegirTipoNuevo(tipoServidores);
+    opcionesServidor.reiniciar();
     modalServidor.classList.add("visible");
     entradaServidor.focus();
     entradaServidor.select();
@@ -1263,7 +1301,7 @@ function confirmarServidor() {
     fetch("/api/servidores", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ nombre: nombre, host: host, max: maxNuevo, tipo: tipoNuevo })
+        body: JSON.stringify({ nombre: nombre, host: host, max: maxNuevo, tipo: tipoNuevo, estacionInicial: opcionesServidor.obtener() })
     })
         .then(function (r) {
             return r.json().then(function (datos) {
@@ -1396,6 +1434,7 @@ document.getElementById("btnSalir").addEventListener("click", function () {
                 pausado = true;
                 tPausa = performance.now();
                 window.juegoPausado = true;
+                guardarTiempoJugado();
                 if (window.soltarControles) window.soltarControles();
                 try { document.exitPointerLock(); } catch (e) {}
                 btnConfigJuego.style.display = "none";
@@ -1485,6 +1524,21 @@ document.getElementById("btnSalir").addEventListener("click", function () {
                 if (!pausado) abrirPausa();
                 else if (configAbiertaEnJuego()) volverAPausa();
                 else cerrarPausa();
+            });
+
+            // ===== GUARDAR EL TIEMPO JUGADO (partidas offline) =====
+            function guardarTiempoJugado() {
+                if (!enJuego || servidorActual || !partidaActual || !window.tiempoJugadoEstaciones) return;
+                const lista = leerPartidas();
+                const partida = lista.find(function (p) { return p.id === partidaActual; });
+                if (!partida) return;
+                partida.tiempoJugadoMs = window.tiempoJugadoEstaciones();
+                guardarPartidas(lista);
+            }
+            setInterval(guardarTiempoJugado, 5000);
+            window.addEventListener("pagehide", guardarTiempoJugado);
+            document.addEventListener("visibilitychange", function () {
+                if (document.hidden) guardarTiempoJugado();
             });
 
             // ===== CERRAR SERVIDORES PROPIOS =====

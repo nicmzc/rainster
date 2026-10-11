@@ -123,12 +123,13 @@ if (!gl) {
         attribute vec3 posicion;
         attribute vec3 color;
         uniform mat4 camara;
+        uniform vec3 tinte;
         varying vec3 vColor;
         varying float vDist;
 
         void main() {
             gl_Position = camara * vec4(posicion, 1.0);
-            vColor = color;
+            vColor = color * tinte;
             vDist = gl_Position.w;
         }
     `);
@@ -137,12 +138,14 @@ if (!gl) {
     const fragmentShader = gl.createShader(gl.FRAGMENT_SHADER);
     gl.shaderSource(fragmentShader, `
         precision mediump float;
+        uniform vec3 fondo;
+        uniform float nieblaDist;
         varying vec3 vColor;
         varying float vDist;
 
         void main() {
-            float niebla = clamp(vDist / 35.0, 0.0, 1.0);
-            vec3 fondo = vec3(0.10, 0.11, 0.14);
+            float niebla = clamp(vDist / nieblaDist, 0.0, 1.0);
+            
             gl_FragColor = vec4(mix(vColor, fondo, niebla), 1.0);
         }
     `);
@@ -165,6 +168,13 @@ if (!gl) {
     const uCamara = gl.getUniformLocation(programa, "camara");
 
     gl.enable(gl.DEPTH_TEST);
+
+    const uTinte = gl.getUniformLocation(programa, "tinte");
+    const uFondo = gl.getUniformLocation(programa, "fondo");
+    const uNiebla = gl.getUniformLocation(programa, "nieblaDist");
+    gl.uniform3f(uTinte, 1, 1, 1);
+    gl.uniform3f(uFondo, 0.10, 0.11, 0.14);
+    gl.uniform1f(uNiebla, 35);
 
     // ===== JUGADOR =====
     let px = 0;
@@ -468,7 +478,18 @@ if (!gl) {
         ws.onmessage = function (e) {
             try {
                 const mensaje = JSON.parse(e.data);
-                if (mensaje.tipo === "hola") { miId = mensaje.id; entro = true; alEntrar(); }
+                if (mensaje.tipo === "hola") {
+                    miId = mensaje.id;
+                    entro = true;
+                    if (mensaje.reloj) {
+                        window.iniciarEstaciones({
+                            modo: "online",
+                            reloj: mensaje.reloj,
+                            desfaseMs: (mensaje.ahora || Date.now()) - Date.now()
+                        });
+                    }
+                    alEntrar();
+                }
                 if (mensaje.tipo === "error") fallar(mensaje.motivo);
                 if (mensaje.tipo === "jugadores") otros = mensaje.jugadores;
                 if (mensaje.tipo === "cerrado") {
@@ -534,11 +555,111 @@ if (!gl) {
         }, { passive: false });
     }
    
+        // ===== ESTACIONES DEL AÑO =====
+    // Se activan al empezar una partida (offline) o cuando el servidor te manda su reloj (online).
+    // Efectos de hoy: velocidad, luz, niebla/lluvia y color del mundo. El resto de los
+    // modificadores (cultivos, recursos, frío, sed) están listos en estaciones.js.
+    const estacionesJuego = {
+        activo: false,
+        modo: null,           // "offline" u "online"
+        reloj: null,
+        desfaseMs: 0,         // online: diferencia entre el reloj del servidor y el tuyo
+        tiempoJugadoMs: 0,    // offline: el tiempo solo corre mientras jugás
+        indiceAnterior: -1,
+        textoHud: "",
+        reiniciarAmbiente: true,
+        ambiente: { cielo: [0.10, 0.11, 0.14], tinte: [1, 1, 1], niebla: 35 }
+    };
+
+    const hudEstacion = document.createElement("div");
+    hudEstacion.style.cssText =
+        "position:fixed;top:20px;left:50%;transform:translateX(-50%);z-index:800;" +
+        "display:none;padding:0.4rem 1.2rem;font-family:'Cinzel Decorative',serif;" +
+        "font-size:0.95rem;letter-spacing:2px;color:#ffffff;white-space:nowrap;" +
+        "background:rgba(20,0,0,0.75);border:2px solid rgba(255,215,220,0.85);" +
+        "border-radius:18px;pointer-events:none;";
+    document.body.appendChild(hudEstacion);
+
+    window.iniciarEstaciones = function (config) {
+        const e = estacionesJuego;
+        e.activo = true;
+        e.modo = config.modo;
+        e.reloj = config.reloj;
+        e.desfaseMs = config.desfaseMs || 0;
+        e.tiempoJugadoMs = config.tiempoJugadoMs || 0;
+        e.indiceAnterior = -1;
+        e.textoHud = "";
+        e.reiniciarAmbiente = true;
+        hudEstacion.style.display = "block";
+    };
+
+    // Tiempo jugado (para guardarlo en la partida offline)
+    window.tiempoJugadoEstaciones = function () {
+        return Math.floor(estacionesJuego.tiempoJugadoMs);
+    };
+
+    function estadoEstacion() {
+        const e = estacionesJuego;
+        const ahora = e.modo === "online" ? Date.now() + e.desfaseMs : e.tiempoJugadoMs;
+        return Estaciones.obtenerEstado(e.reloj, ahora);
+    }
+
+    // Se llama en cada cuadro. Devuelve el multiplicador de velocidad de la estación.
+    function actualizarEstaciones(dt, msReales) {
+        const e = estacionesJuego;
+        if (!e.activo || !e.reloj) return 1;
+
+        // Offline: el reloj avanza solo mientras jugás (no cuenta la pausa)
+        if (e.modo === "offline") e.tiempoJugadoMs += Math.min(msReales, 1000);
+
+        const estado = estadoEstacion();
+        const est = estado.estacion;
+        const mod = est.modificadores;
+
+        // Aviso al empezar y cada vez que cambia la estación
+        if (estado.indice !== e.indiceAnterior) {
+            const primera = e.indiceAnterior === -1;
+            e.indiceAnterior = estado.indice;
+            if (window.mostrarAviso) {
+                window.mostrarAviso(
+                    (primera ? "Estación: " : "Llegó ") + est.nombre +
+                    "  ·  + " + est.beneficio + "  ·  − " + est.problema, 6000
+                );
+            }
+        }
+
+        // Cartel de arriba
+        const texto = est.nombre + " · Día " + estado.diaEnEstacion + "/" +
+            Estaciones.DIAS_POR_ESTACION + " · Año " + estado.anio;
+        if (texto !== e.textoHud) {
+            e.textoHud = texto;
+            hudEstacion.textContent = texto;
+        }
+
+        // Ambiente: más luz = mundo más claro; más lluvia = más niebla
+        const brillo = 0.75 + 0.25 * mod.luz;
+        const niebla = 35 / (0.7 + 0.3 * mod.lluvia);
+        const k = e.reiniciarAmbiente ? 1 : Math.min(1, dt * 0.8); // cambia suave
+        e.reiniciarAmbiente = false;
+        const a = e.ambiente;
+        for (let i = 0; i < 3; i++) {
+            a.cielo[i] += (est.cielo[i] - a.cielo[i]) * k;
+            a.tinte[i] += (est.tinte[i] * brillo - a.tinte[i]) * k;
+        }
+        a.niebla += (niebla - a.niebla) * k;
+        gl.uniform3f(uTinte, a.tinte[0], a.tinte[1], a.tinte[2]);
+        gl.uniform3f(uFondo, a.cielo[0], a.cielo[1], a.cielo[2]);
+        gl.uniform1f(uNiebla, a.niebla);
+
+        return mod.velocidad;
+    }
+
     // ===== BUCLE DEL JUEGO =====
     let anterior = performance.now();
 
     function animar(ahora) {
-        const dt = Math.min((ahora - anterior) / 1000, 0.05);
+        const msReales = ahora - anterior;
+        const dt = Math.min(msReales / 1000, 0.05);
         anterior = ahora;
        
         // En pausa el juego queda quieto
@@ -546,6 +667,8 @@ if (!gl) {
             requestAnimationFrame(animar);
             return;
         }
+
+        const multEstacion = actualizarEstaciones(dt, msReales);
 
         // Mirar con las flechas
         if (teclas["ArrowLeft"]) yaw += 1.8 * dt;
@@ -565,7 +688,7 @@ if (!gl) {
         adelante += joyAdelante;
         lado += joyLado;
 
-        const velocidad = (teclas[K.correr] || correrCelu) ? 6 : 3;
+        const velocidad = ((teclas[K.correr] || correrCelu) ? 6 : 3) * multEstacion;
         const seno = Math.sin(yaw);
         const coseno = Math.cos(yaw);
 
@@ -596,7 +719,8 @@ if (!gl) {
         );
         gl.uniformMatrix4fv(uCamara, false, multiplicar(proyeccion, vista));
 
-        gl.clearColor(0.10, 0.11, 0.14, 1);
+        const cielo = estacionesJuego.ambiente.cielo;
+        gl.clearColor(cielo[0], cielo[1], cielo[2], 1);
         gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
         configurarAtributos(buffer);
         gl.drawArrays(gl.TRIANGLES, 0, cantidad);

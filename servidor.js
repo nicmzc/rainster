@@ -3,11 +3,12 @@ const fs = require("fs");
 const path = require("path");
 const WebSocket = require("ws");
 const crypto = require("crypto");
+const Estaciones = require("./estaciones.js");
 
 const PUERTO = process.env.PORT || 3000;
 const permitidos = [
     "rainster.html", "juego.js", "manifest.webmanifest",
-    "sw.js", "icono.rainster.png", "icono.rainster2.png",
+    "sw.js", "estaciones.js", "icono.rainster.png", "icono.rainster2.png",
     "assetlinks.json"
 ];
 const tipos = {
@@ -104,7 +105,8 @@ const servidor = http.createServer(function (req, res) {
                 .map(function (s) {
                     return {
                         id: s.id, nombre: s.nombre, host: s.host, tipo: s.tipo,
-                        max: s.max, jugadores: s.sockets.size
+                        max: s.max, jugadores: s.sockets.size,
+                        estacion: Estaciones.obtenerEstado(s.reloj).estacion.nombre
                     };
                 });
             responder(res, 200, lista);
@@ -127,6 +129,8 @@ const servidor = http.createServer(function (req, res) {
                 const host = limpiar(datos.host, 20) || "Jugador";
                 const tipo = datos.tipo === "lan" ? "lan" : "online";
                 const max = Math.max(2, Math.min(10, parseInt(datos.max, 10) || 10));
+                const estacionInicial = Estaciones.OPCIONES_ESTACION_INICIAL.includes(datos.estacionInicial)
+                    ? datos.estacionInicial : "otono";
                 if (!nombre) {
                     responder(res, 400, { error: "Ponele un nombre al servidor" });
                     return;
@@ -144,7 +148,8 @@ const servidor = http.createServer(function (req, res) {
                 salas[id] = {
                     id: id, token: crypto.randomBytes(16).toString("hex"),
                     nombre: nombre, host: host, tipo: tipo, max: max, ip: ip,
-                    jugadores: {}, sockets: new Set(), creada: Date.now(), vacioDesde: Date.now()
+                    jugadores: {}, sockets: new Set(), creada: Date.now(), vacioDesde: Date.now(),
+                    reloj: Estaciones.crearReloj({ estacionInicial: estacionInicial })
                 };
                 responder(res, 200, { id: id, token: salas[id].token });
             });
@@ -198,7 +203,7 @@ wss.on("connection", function (socket, req) {
     sala.sockets.add(socket);
     sala.vacioDesde = null;
     sala.jugadores[id] = { x: 0, z: 9, yaw: 0, y: 0, c: id % 6, n: limpiar(params.get("nombre"), 20) || "Jugador" };
-    socket.send(JSON.stringify({ tipo: "hola", id: id }));
+    socket.send(JSON.stringify({ tipo: "hola", id: id, reloj: sala.reloj, ahora: Date.now() }));
 
     socket.on("message", function (mensaje) {
         try {

@@ -259,6 +259,7 @@ if (!gl) {
             interactuar: "KeyE",
             tirar: "KeyQ"
         },
+        inventario: null,   // lugar y tamaño del inventario: { fx, fy, k } (fx, fy = esquina de arriba a la izquierda, en fracción de la pantalla)
         botones: {}      // posición de los botones del celular que el jugador movió: { id: { fx, fy } } (centro, en fracción de la pantalla)
     };
 
@@ -287,6 +288,7 @@ if (!gl) {
                 datos.teclas = Object.assign({}, AJUSTES_BASE.teclas);
                 datos.invertirY = false;
                 datos.botones = {};
+                datos.inventario = null;
                 this.guardar();
                 if (window.Botones) window.Botones.aplicar();
             },
@@ -488,46 +490,129 @@ if (!gl) {
         gl.vertexAttribPointer(color, 3, gl.FLOAT, false, 24, 12);
     }
 
+    // Los demás jugadores se ven igual que vos en el inventario: el mismo modelo (brazos, ropa puesta,
+    // objetos en las manos, piernas lastimadas, cabeza que gira) y las mismas animaciones.
+    // Cada cliente manda su estado y acá se arma el modelo con cajasPersonaje().
     const animOtros = {};
+    const COLORES_OTROS = [
+        [1.0, 0.55, 0.0], [0.3, 0.6, 1.0], [0.4, 0.9, 0.4],
+        [0.95, 0.4, 0.7], [0.95, 0.9, 0.3], [0.6, 0.4, 0.95]
+    ];
+    const SLOTS_EQUIPO = ["cabeza", "torso", "piernas", "pies", "espalda"];
+    function itemValido(id) { return typeof id === "string" && ITEMS[id] ? id : null; }
+    function equipoRemoto(q) {
+        const eq = {};
+        if (typeof q !== "string") return eq;
+        const partes = q.split(",");
+        SLOTS_EQUIPO.forEach(function (k, i) {
+            const id = itemValido(partes[i]);
+            if (id && ITEMS[id].slot === k) eq[k] = id;
+        });
+        return eq;
+    }
+
+    // caras de un cubo cuyas 8 puntas se ordenan como ix + 2*iy + 4*iz
+    const CARAS_CUBO = [[2, 3, 7, 6], [0, 1, 5, 4], [4, 5, 7, 6], [0, 1, 3, 2], [0, 4, 6, 2], [1, 5, 7, 3]];
+    function cuboATriangulos(lista, P, col) {
+        let cx = 0, cy = 0, cz = 0;
+        for (const q of P) { cx += q[0]; cy += q[1]; cz += q[2]; }
+        cx /= 8; cy /= 8; cz /= 8;
+        for (const f of CARAS_CUBO) {
+            const a = P[f[0]], b = P[f[1]], c = P[f[2]], d = P[f[3]];
+            const u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], v = [d[0] - a[0], d[1] - a[1], d[2] - a[2]];
+            let n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+            const l = Math.hypot(n[0], n[1], n[2]) || 1;
+            n = [n[0] / l, n[1] / l, n[2] / l];
+            const m = [(a[0] + b[0] + c[0] + d[0]) / 4 - cx, (a[1] + b[1] + c[1] + d[1]) / 4 - cy, (a[2] + b[2] + c[2] + d[2]) / 4 - cz];
+            if (n[0] * m[0] + n[1] * m[1] + n[2] * m[2] < 0) n = [-n[0], -n[1], -n[2]];   // que apunte hacia afuera
+            const br = Math.max(0.5, Math.min(1, 0.72 + 0.28 * n[1] + 0.1 * n[0] - 0.08 * n[2]));
+            for (const i of [0, 1, 2, 0, 2, 3]) {
+                const q = P[f[i]];
+                lista.push(q[0], q[1], q[2], col[0] * br, col[1] * br, col[2] * br);
+            }
+        }
+    }
+
+    // Pasa las cajas del modelo del personaje (que ya traen sus giros) al mundo, en (wx, wy, wz).
+    // El modelo mira hacia +z y su derecha es -x; en el mundo "adelante" es -z, por eso se invierten x y z.
+    function personajeATriangulos(lista, cajas, wx, wy, wz) {
+        for (const b of cajas) {
+            const rots = b.r || [];
+            const yaT = b.ya || 0, cY = Math.cos(yaT), sY = Math.sin(yaT);
+            const llevar = function (qx, qy, qz) {
+                for (const r of rots) {
+                    const dy = qy - r[1], dz = qz - r[2], c = Math.cos(r[0]), sn = Math.sin(r[0]);
+                    qy = r[1] + dy * c - dz * sn;
+                    qz = r[2] + dz * c + dy * sn;
+                }
+                qy += b.oy || 0;
+                if (yaT) { const nx = qx * cY + qz * sY; qz = -qx * sY + qz * cY; qx = nx; }
+                return [wx - qx, wy + qy, wz - qz];
+            };
+            const xs = [b.x - b.a, b.x + b.a], ys = [b.y1, b.y2], zs = [b.z - b.l, b.z + b.l];
+            const P = [];
+            for (let i = 0; i < 8; i++) P.push(llevar(xs[i & 1], ys[(i >> 1) & 1], zs[(i >> 2) & 1]));
+            cuboATriangulos(lista, P, b.c);
+            if (b.g) {
+                // huesos trizados: marcas oscuras en el frente de la pierna
+                GRIETA.forEach(function (q) {
+                    const u = Math.max(0.1, Math.min(0.9, q[0] + (b.g - 2) * 0.12));
+                    const gx = b.x - b.a + 2 * b.a * u, gy = b.y1 + (b.y2 - b.y1) * q[1], gz = b.z + b.l + 0.004;
+                    const C = [];
+                    for (let i = 0; i < 8; i++) C.push(llevar(gx + ((i & 1) ? 0.025 : -0.025), gy + (((i >> 1) & 1) ? 0.025 : -0.025), gz + ((i >> 2) & 1 ? 0.01 : -0.004)));
+                    cuboATriangulos(lista, C, [0.1, 0, 0]);
+                });
+            }
+        }
+    }
+
     function dibujarOtros() {
         const lista = [];
         const ahoraS = performance.now() / 1000;
+        for (const id in animOtros) if (!otros[id]) delete animOtros[id];
         for (const id in otros) {
             if (id === String(miId)) continue;
             const j = otros[id];
-            const colores = [
-                [1.0, 0.55, 0.0], [0.3, 0.6, 1.0], [0.4, 0.9, 0.4],
-                [0.95, 0.4, 0.7], [0.95, 0.9, 0.3], [0.6, 0.4, 0.95]
-            ];
-            const col = hexARgb(j.col) || colores[(j.c || 0) % colores.length];
-            const cara = [0.9, 0.9, 1.0];
             const y = j.y || 0;
             const p = (j.p === 1 || j.p === 2) ? j.p : 0;
-            if (p === 2) {
-                // arrastrándose: el rectángulo acostado, con lo blanco al frente
-                cajaGirada(lista, j.x, j.z, j.yaw, 0.6, y, y + 0.35, 1.5, 0, col);
-                cajaGirada(lista, j.x, j.z, j.yaw, 0.4, y + 0.12, y + 0.34, 0.3, -0.7, cara);
-            } else {
-                const alto = p === 1 ? 1.15 : 1.7;
-                cajaGirada(lista, j.x, j.z, j.yaw, 0.6, y, y + alto, 0.4, 0, col);
-                cajaGirada(lista, j.x, j.z, j.yaw, 0.4, y + alto - 0.35, y + alto - 0.1, 0.3, -0.3, cara);
-            }
 
-            // golpe: cuando cambia su contador se ve el manotazo
+            // estado propio de cada jugador visto desde acá (cuerpo que sigue a la cabeza, fase del paso, golpe)
             let an = animOtros[id];
-            if (!an) an = animOtros[id] = { g: j.g || 0, t0: -9 };
-            if ((j.g || 0) !== an.g) { an.g = j.g || 0; an.t0 = ahoraS; }
-            const sw = ahoraS - an.t0;
-            const bal = (sw >= 0 && sw < 0.3) ? Math.sin(sw / 0.3 * Math.PI) : 0;
-            if (p !== 2) {
-                const hy = y + (p === 1 ? 0.6 : 0.9);
-                if (j.m && ITEMS[j.m]) {
-                    cajaGirada(lista, j.x, j.z, j.yaw, 0.08, hy, hy + 0.08, 0.6, -0.4 - bal * 0.45, COLOR_ITEM[j.m] || [0.6, 0.6, 0.6], 0.42);
-                } else if (j.pe) {
-                    cajaGirada(lista, j.x, j.z, j.yaw, 0.12, hy, hy + 0.12, 0.12, -0.35 - bal * 0.5, col, 0.32);
-                    cajaGirada(lista, j.x, j.z, j.yaw, 0.12, hy, hy + 0.12, 0.12, -0.35, col, -0.32);
-                }
+            if (!an) an = animOtros[id] = { g: j.g || 0, t0: -9, cuerpo: j.yaw || 0, fase: 0, mov: 0, ult: ahoraS, x: j.x, z: j.z, vel: 0 };
+            const dt = Math.min(0.1, Math.max(0, ahoraS - an.ult));
+            an.ult = ahoraS;
+            if (dt > 0) {
+                const v = Math.hypot(j.x - an.x, j.z - an.z) / dt;
+                an.vel += (Math.min(v, 12) - an.vel) * Math.min(1, dt * 6);
+                an.x = j.x; an.z = j.z;
+                an.mov += ((typeof j.am === "number" ? j.am : 0) - an.mov) * Math.min(1, dt * 10);
+                if (an.mov > 0.1) an.fase += dt * (p === 2 ? 3.5 : Math.max(2.5, Math.min(16, an.vel * 2.4)));
+                // igual que tu inventario: la cabeza gira hasta cierto límite y después arrastra al cuerpo
+                const LIM = 0.9;
+                let d = angDif(j.yaw, an.cuerpo);
+                if (Math.abs(d) > LIM) { an.cuerpo += d - Math.sign(d) * LIM; d = angDif(j.yaw, an.cuerpo); }
+                an.cuerpo += d * Math.min(1, dt * (an.mov > 0.1 ? 8 : 1.5));
             }
+            // golpe: cuando cambia su contador se ve el manotazo
+            if ((j.g || 0) !== an.g) { an.g = j.g || 0; an.t0 = ahoraS; }
+
+            const est = {
+                base: hexARgb(j.col) || COLORES_OTROS[(j.c || 0) % COLORES_OTROS.length],
+                eq: equipoRemoto(j.q),
+                manoD: itemValido(j.md) || (j.md === undefined ? itemValido(j.m) : null),
+                manoI: itemValido(j.mi),
+                pl: [Math.floor((j.pl || 0) / 3) % 3, (j.pl || 0) % 3],
+                postura: p,
+                pelea: !!j.pe,
+                fase: an.fase,
+                mov: an.mov,
+                corre: !!j.ac,
+                golpeT: ahoraS - an.t0,
+                pitch: typeof j.pi === "number" ? j.pi : 0,
+                giroCuerpo: an.cuerpo,
+                giroCab: angDif(j.yaw, an.cuerpo)
+            };
+            personajeATriangulos(lista, cajasPersonaje(est), j.x, y, j.z);
         }
         if (lista.length === 0) return;
 
@@ -628,7 +713,13 @@ if (!gl) {
             conexion.send(JSON.stringify({
                 x: px, z: pz, yaw: yaw, y: saltoY,
                 p: postura, m: itemMano() || "", pe: modoPelea ? 1 : 0, col: A.colorPersonaje || "",
-                r: Math.round(ruidoRadio * 10) / 10, g: golpesN
+                r: Math.round(ruidoRadio * 10) / 10, g: golpesN,
+                // para que te vean igual que en tu inventario: cabeza, manos, ropa, piernas y movimiento
+                pi: Math.round(pitch * 100) / 100,
+                md: inv.manoD || "", mi: inv.manoI || "",
+                q: [inv.equipo.cabeza, inv.equipo.torso, inv.equipo.piernas, inv.equipo.pies, inv.equipo.espalda].map(function (x) { return x || ""; }).join(","),
+                pl: sv.piernas[0].n * 3 + sv.piernas[1].n,
+                am: Math.round(animMov * 100) / 100, ac: animCorre ? 1 : 0
             }));
         }
     }, 50);
@@ -691,7 +782,9 @@ if (!gl) {
         const subir = UI.apilado ? UI_ALTO_BARRA * u + 8 + u * 0.2 + seg.aba : 0;
         for (const id in botonesUI) {
             const b = botonesUI[id], el = b.el, c = A.botones && A.botones[id];
-            b.w = Math.round(b.k * u);
+            const esc = (c && isFinite(c.esc)) ? Math.max(0.4, Math.min(2.2, c.esc)) : 1;   // tamaño que eligió el jugador
+            b.esc = esc;
+            b.w = Math.round(b.k * u * esc);
             el.style.width = b.w + "px";
             el.style.height = b.w + "px";
             el.style.fontSize = Math.max(9, Math.round(b.w * 0.18)) + "px";
@@ -721,13 +814,14 @@ if (!gl) {
         lista: function () {
             return Object.keys(botonesUI).map(function (id) {
                 const b = botonesUI[id], r = b.el.getBoundingClientRect();
-                return { id: id, nombre: b.nombre, w: b.w, cx: r.left + r.width / 2, cy: r.top + r.height / 2 };
+                return { id: id, nombre: b.nombre, w: b.w, esc: b.esc || 1, cx: r.left + r.width / 2, cy: r.top + r.height / 2 };
             });
         },
-        poner: function (id, fx, fy) {
+        poner: function (id, fx, fy, esc) {
             if (!botonesUI[id]) return;
             A.botones = A.botones || {};
             A.botones[id] = { fx: fx, fy: fy };
+            if (esc && isFinite(esc) && Math.abs(esc - 1) > 0.01) A.botones[id].esc = esc;
         },
         aplicar: aplicarBotones,
         restablecer: function () { A.botones = {}; aplicarBotones(); }
@@ -1385,15 +1479,22 @@ if (!gl) {
 /* ===== INVENTARIO ===== */
 #invFondo{position:fixed;inset:0;z-index:850;display:none;pointer-events:none;}
 #invFondo.visible{display:block;}
-#invCaja{position:absolute;left:50%;transform:translateX(-50%);top:10px;bottom:calc(var(--slot) + 22px);width:min(94vw,calc(var(--s2)*15.6));
- box-sizing:border-box;pointer-events:auto;overflow:auto;display:grid;grid-template-columns:auto auto auto 1fr;grid-template-rows:1fr auto;
+#invCaja{--s2:calc(var(--slot)*.86*var(--ik,1));position:absolute;left:50%;transform:translateX(-50%);top:10px;max-height:calc(100% - var(--slot) - 32px);width:min(94vw,calc(var(--s2)*15.6));
+ box-sizing:border-box;pointer-events:auto;overflow:auto;display:grid;grid-template-columns:auto auto auto 1fr;grid-template-rows:auto 1fr auto;
  gap:10px 18px;padding:12px 16px;border:2px solid rgba(255,215,220,.85);border-radius:22px;background:rgba(22,0,0,.95);
  box-shadow:0 0 30px rgba(255,0,0,.35);font-family:'Cinzel Decorative',serif;color:#fff;}
-#invCaja .invVista{position:relative;align-self:stretch;width:calc(var(--s2)*2.3);min-height:calc(var(--s2)*4.2);box-sizing:border-box;
+#invCaja .invVista{position:relative;align-self:stretch;width:calc(var(--s2)*2.3);min-height:calc(var(--s2)*5);box-sizing:border-box;
  border:2px solid rgba(255,215,220,.85);border-radius:14px;background:rgba(60,0,0,.35);overflow:hidden;}
 #invCaja .invVista canvas{position:absolute;left:0;top:0;width:100%;height:100%;display:block;touch-action:none;cursor:grab;
  user-select:none;-webkit-user-select:none;}
 #invCaja .invVista canvas:active{cursor:grabbing;}
+#invCaja .invCab{grid-column:1/-1;display:flex;align-items:center;gap:6px;margin:-4px 0 0;padding-bottom:6px;border-bottom:2px solid rgba(255,215,220,.4);
+ cursor:grab;touch-action:none;user-select:none;-webkit-user-select:none;font-size:max(11px,calc(var(--s2)*.3));letter-spacing:2px;color:#e8c9c9;text-shadow:0 0 8px #f00;}
+#invCaja .invCab.mueve{cursor:grabbing;}
+#invCaja .invCab .invCabTit{flex:1;white-space:nowrap;}
+#invCaja .invCab button{font-family:inherit;font-size:inherit;line-height:1;min-width:calc(var(--s2)*.62);height:calc(var(--s2)*.62);padding:0 .35em;color:#fff;background:rgba(60,0,0,.6);
+ border:2px solid rgba(255,215,220,.7);border-radius:10px;cursor:pointer;text-shadow:0 0 8px #f00;touch-action:none;}
+#invCaja .invCab button.grip{cursor:nwse-resize;}
 #invCaja .invPie .invLes{flex-basis:100%;font-size:max(10px,calc(var(--s2)*.26));line-height:1.4;color:#ffb3b3;text-shadow:0 0 4px #000;}
 #hudBajo .hbSlot.mano{background:rgba(150,80,0,.55);box-shadow:inset 0 0 12px rgba(255,170,60,.9),0 0 10px rgba(255,150,40,.7);}
 #invCaja .invTit{font-size:max(11px,calc(var(--s2)*.3));letter-spacing:2px;color:#e8c9c9;text-shadow:0 0 8px #f00;margin-bottom:5px;}
@@ -1971,10 +2072,31 @@ if (!gl) {
 
     // Arma el mismo rectángulo del juego en franjas; cada prenda puesta pinta (y agranda un poco) su franja.
     // Con las piernas lastimadas se ven: esguince = vendaje, fractura = trizada y la pierna medio salida.
-    function cajasPersonaje() {
+    // Estado de tu personaje (el de la vista previa). Los demás jugadores arman uno igual con lo que mandan.
+    function estadoPropio() {
         const mio = (typeof otros !== "undefined" && miId !== null && otros[miId]) ? otros[miId] : null;
-        const base = hexARgb(A.colorPersonaje) || COLORES_JUGADOR[((mio && mio.c) || 0) % COLORES_JUGADOR.length];
-        const eq = inv.equipo;
+        return {
+            base: hexARgb(A.colorPersonaje) || COLORES_JUGADOR[((mio && mio.c) || 0) % COLORES_JUGADOR.length],
+            eq: inv.equipo,
+            manoD: inv.manoD,
+            manoI: inv.manoI,
+            pl: [sv.piernas[0].n, sv.piernas[1].n],
+            postura: postura,
+            pelea: modoPelea,
+            fase: animFase,
+            mov: animMov,
+            corre: animCorre,
+            golpeT: golpeT,
+            pitch: pitch,
+            giroCuerpo: vista.cuerpo - vista.base,
+            giroCab: angDif(yaw, vista.cuerpo)
+        };
+    }
+
+    function cajasPersonaje(e) {
+        e = e || estadoPropio();
+        const base = e.base;
+        const eq = e.eq;
         const camisa = eq.torso ? COLOR_ITEM[eq.torso] : null;
         const pantalon = eq.piernas ? COLOR_ITEM[eq.piernas] : null;
         const botas = eq.pies ? COLOR_ITEM[eq.pies] : null;
@@ -1991,12 +2113,12 @@ if (!gl) {
         const colPie = botas || pantalon || base;
         const ap = pantalon ? 0.64 : 0.6, lp = pantalon ? 0.44 : 0.4;       // ancho y largo de las piernas
         const apie = botas ? 0.66 : ap, lpie = botas ? 0.46 : lp;
-        const pl = sv.piernas;
+        const pl = e.pl;
         const rojo = [0.8, 0.15, 0.15];
         for (const i of [0, 1]) {
             const lado = i === 0 ? 1 : -1;                               // la pierna izquierda se ve a la derecha, de frente
             const x = lado * ap / 4;
-            const n = pl[i].n;
+            const n = pl[i];
             const cp = n === 2 ? mezclar(colPierna, rojo, 0.3) : colPierna;
             const cpie = n === 2 ? mezclar(colPie, rojo, 0.3) : colPie;
             const pierna = function (b) { b.pi = i; return b; };         // para balancearla al caminar
@@ -2029,18 +2151,19 @@ if (!gl) {
         const colBrazo = camisa || base;
         const brazos = { "-1": add(-0.4, 0.62, 1.33, 0, 0.16, 0.22, colBrazo), "1": add(0.4, 0.62, 1.33, 0, 0.16, 0.22, colBrazo) };
         // lo que tenés en las manos: la derecha se ve a la izquierda de frente, la izquierda a la derecha
-        if (inv.manoD === "muletas" || inv.manoI === "muletas") {
+        if (e.manoD === "muletas" || e.manoI === "muletas") {
             for (const sg of [-1, 1]) {
                 add(sg * 0.47, 0.05, 1.15, 0.12, 0.06, 0.06, COLOR_ITEM.muletas).fijo = true;
                 add(sg * 0.47, 1.08, 1.15, 0.12, 0.16, 0.1, [0.45, 0.35, 0.25]).fijo = true;
             }
         }
         // Animación en vivo: lo que hacés en el juego se ve acá (caminar, correr, arrastrarte, pegar, mirar)
-        const balanceo = Math.sin(animFase) * animMov;
-        const golpeando = golpeT < 0.3 ? Math.sin(golpeT / 0.3 * Math.PI) : 0;
-        const conObjeto = !!itemMano();
-        const manoGolpea = conObjeto ? ((inv.manoD && ITEMS[inv.manoD].mano) ? "D" : "I") : "D";
-        [[inv.manoD, -1], [inv.manoI, 1]].forEach(function (par) {
+        const balanceo = Math.sin(e.fase) * e.mov;
+        const golpeando = e.golpeT < 0.3 ? Math.sin(e.golpeT / 0.3 * Math.PI) : 0;
+        const esDeMano = function (id) { return !!id && !!ITEMS[id] && !!ITEMS[id].mano; };
+        const conObjeto = esDeMano(e.manoD) || esDeMano(e.manoI);
+        const manoGolpea = conObjeto ? (esDeMano(e.manoD) ? "D" : "I") : "D";
+        [[e.manoD, -1], [e.manoI, 1]].forEach(function (par) {
             const id = par[0], sd = par[1], x = sd * 0.4;
             const k = sd === -1 ? "D" : "I";
             const grupo = [brazos[String(sd)]];
@@ -2055,42 +2178,42 @@ if (!gl) {
                 }
                 ang = -0.6;                                    // con algo en la mano el brazo se estira hacia adelante (gira desde el hombro)
             }
-            if (modoPelea) ang = Math.min(ang, -0.9);          // puños arriba
+            if (e.pelea) ang = Math.min(ang, -0.9);          // puños arriba
             if (k === manoGolpea && golpeando > 0) ang -= 1.1 * golpeando;      // el golpe
-            const libre = !(id && id !== "muletas") && !modoPelea;
-            const amp = postura === 2 ? 0.7 : (libre ? (animCorre ? 0.9 : 0.55) : 0.1);
-            if (postura === 2) ang = -2.2;                      // arrastrándote: los brazos van estirados hacia adelante, por el piso
+            const libre = !(id && id !== "muletas") && !e.pelea;
+            const amp = e.postura === 2 ? 0.7 : (libre ? (e.corre ? 0.9 : 0.55) : 0.1);
+            if (e.postura === 2) ang = -2.2;                      // arrastrándote: los brazos van estirados hacia adelante, por el piso
             ang += (sd === 1 ? -1 : 1) * amp * balanceo;       // los brazos se balancean al revés que las piernas (arrastrándote: se estiran y se encogen)
             if (ang !== 0) grupo.forEach(function (b) { b.r = [[ang, 1.28, 0]]; });
         });
         // Piernas: se balancean al caminar (la lastimada, menos)
-        const ampP = postura === 2 ? 0.5 : postura === 1 ? 0.35 : (animCorre ? 0.95 : 0.6);
+        const ampP = e.postura === 2 ? 0.5 : e.postura === 1 ? 0.35 : (e.corre ? 0.95 : 0.6);
         L.forEach(function (b) {
             if (b.pi === undefined) return;
-            const flojo = pl[b.pi].n > 0 ? 0.4 : 1;
+            const flojo = pl[b.pi] > 0 ? 0.4 : 1;
             const a = (b.pi === 0 ? 1 : -1) * ampP * flojo * balanceo;
             if (a !== 0) b.r = [[a, 0.7, 0]];
         });
         // Cabeza: sube y baja con hacia dónde mirás, y gira a los costados (el cuerpo la sigue de a poco)
-        const cabeceo = Math.max(-0.95, Math.min(0.95, -pitch * 0.65)) + (postura === 2 ? -1.35 : 0);   // arrastrándote la cabeza se levanta para mirar al frente
-        const giroCab = Math.max(-0.9, Math.min(0.9, angDif(yaw, vista.cuerpo)));
+        const cabeceo = Math.max(-0.95, Math.min(0.95, -e.pitch * 0.65)) + (e.postura === 2 ? -1.35 : 0);   // arrastrándote la cabeza se levanta para mirar al frente
+        const giroCab = Math.max(-0.9, Math.min(0.9, e.giroCab));
         cabeza.forEach(function (b) { b.cab = true; b.r = [[cabeceo, 1.35, 0]]; });
         // posturas: agachado (inclinado hacia adelante) y arrastrándote (acostado boca abajo, cabeza a la derecha)
-        if (postura === 1) {
+        if (e.postura === 1) {
             // agachado: de la cintura para arriba el cuerpo se inclina hacia adelante (como en Minecraft); las piernas quedan
             torso.y1 = 0.6;                                   // el torso baja un poco para que no quede hueco al inclinarse
             L.forEach(function (b) {
                 if (!b.fijo && b.y1 >= 0.55) b.r = (b.r || []).concat([[0.45, 0.7, 0]]);
             });
-        } else if (postura === 2) {
+        } else if (e.postura === 2) {
             L.forEach(function (b) {                          // todo el cuerpo se acuesta boca abajo
                 b.r = (b.r || []).concat([[1.45, 0.87, 0]]);
                 b.oy = -0.52;
             });
         }
         // giro del cuerpo (sigue hacia dónde mirás) y de la cabeza (un poco más)
-        const giroCuerpo = vista.cuerpo - vista.base;
-        const culebreo = postura === 2 ? 0.16 * balanceo : 0;      // arrastrándote el cuerpo serpentea de lado a lado
+        const giroCuerpo = e.giroCuerpo;
+        const culebreo = e.postura === 2 ? 0.16 * balanceo : 0;      // arrastrándote el cuerpo serpentea de lado a lado
         L.forEach(function (b) { b.ya = giroCuerpo + culebreo + (b.cab ? giroCab : 0); });
         return L;
     }
@@ -2287,6 +2410,7 @@ if (!gl) {
     function pintarInventario() {
         const caja = document.getElementById("invCaja");
         caja.innerHTML = "";
+        caja.appendChild(crearCabeceraInv());
 
         // Vista previa del personaje (se gira arrastrando)
         const colVista = document.createElement("div");
@@ -2366,7 +2490,123 @@ if (!gl) {
             pie.appendChild(t);
         }
         caja.appendChild(pie);
+        aplicarLayoutInv();
     }
+
+    // ----- Inventario: se mueve y se achica o agranda a gusto (se guarda en el dispositivo) -----
+    const INV_K_MIN = 0.5, INV_K_MAX = 1.8;
+    function aplicarLayoutInv() {
+        const caja = document.getElementById("invCaja");
+        if (!caja || !inv.abierto) return;
+        const L = A.inventario;
+        const k = L && isFinite(L.k) ? Math.max(INV_K_MIN, Math.min(INV_K_MAX, L.k)) : 1;
+        caja.style.setProperty("--ik", k.toFixed(3));
+        if (L && isFinite(L.fx) && isFinite(L.fy)) {
+            const W = window.innerWidth, H = window.innerHeight;
+            const r = caja.getBoundingClientRect();
+            caja.style.transform = "none";
+            caja.style.left = Math.round(Math.max(0, Math.min(W - r.width, L.fx * W))) + "px";
+            caja.style.top = Math.round(Math.max(0, Math.min(H - r.height, L.fy * H))) + "px";
+        } else {
+            caja.style.transform = "";
+            caja.style.left = "";
+            caja.style.top = "";
+        }
+    }
+    // pasa de "centrado" a un lugar fijo (para poder moverlo o agrandarlo desde una esquina)
+    function fijarLayoutInv() {
+        if (A.inventario && isFinite(A.inventario.fx) && isFinite(A.inventario.fy)) return;
+        const r = document.getElementById("invCaja").getBoundingClientRect();
+        A.inventario = { fx: r.left / window.innerWidth, fy: r.top / window.innerHeight, k: (A.inventario && A.inventario.k) || 1 };
+    }
+    function cambiarTamInv(delta) {
+        const k = (A.inventario && A.inventario.k) || 1;
+        A.inventario = Object.assign({}, A.inventario || {}, { k: Math.max(INV_K_MIN, Math.min(INV_K_MAX, Math.round((k + delta) * 100) / 100)) });
+        window.Ajustes.guardar();
+        aplicarLayoutInv();
+    }
+    function crearCabeceraInv() {
+        const cab = document.createElement("div");
+        cab.className = "invCab";
+        cab.title = "Arrastrá para mover el inventario";
+        const tit = document.createElement("span");
+        tit.className = "invCabTit";
+        tit.textContent = "⠿ Inventario";
+        cab.appendChild(tit);
+        function boton(txt, titulo, fn, clase) {
+            const b = document.createElement("button");
+            b.textContent = txt;
+            b.title = titulo;
+            if (clase) b.className = clase;
+            b.addEventListener("click", fn);
+            cab.appendChild(b);
+            return b;
+        }
+        boton("−", "Achicar", function () { cambiarTamInv(-0.1); });
+        boton("+", "Agrandar", function () { cambiarTamInv(0.1); });
+        const grip = boton("⤡", "Arrastrá para cambiar el tamaño", function () {}, "grip");
+        boton("↺", "Volver al lugar y tamaño de siempre", function () {
+            A.inventario = null;
+            window.Ajustes.guardar();
+            aplicarLayoutInv();
+        });
+        boton("✕", "Cerrar", function () { cerrarInventario(); });
+
+        // mover: arrastrando la barra de arriba
+        let mueve = null;
+        cab.addEventListener("pointerdown", function (e) {
+            if (e.target.closest("button")) return;
+            fijarLayoutInv();
+            mueve = { x: e.clientX, y: e.clientY, fx: A.inventario.fx, fy: A.inventario.fy };
+            cab.classList.add("mueve");
+            try { cab.setPointerCapture(e.pointerId); } catch (err) {}
+            e.preventDefault();
+        });
+        cab.addEventListener("pointermove", function (e) {
+            if (!mueve) return;
+            A.inventario.fx = mueve.fx + (e.clientX - mueve.x) / window.innerWidth;
+            A.inventario.fy = mueve.fy + (e.clientY - mueve.y) / window.innerHeight;
+            aplicarLayoutInv();
+        });
+        function soltarMover() {
+            if (!mueve) return;
+            mueve = null;
+            cab.classList.remove("mueve");
+            const caja = document.getElementById("invCaja");
+            const r = caja.getBoundingClientRect();     // se guarda ya con el tope de pantalla aplicado
+            A.inventario.fx = r.left / window.innerWidth;
+            A.inventario.fy = r.top / window.innerHeight;
+            window.Ajustes.guardar();
+        }
+        cab.addEventListener("pointerup", soltarMover);
+        cab.addEventListener("pointercancel", soltarMover);
+
+        // achicar / agrandar: arrastrando la esquinita ⤡ (la esquina de arriba a la izquierda se queda quieta)
+        let tam = null;
+        grip.addEventListener("pointerdown", function (e) {
+            fijarLayoutInv();
+            const r = document.getElementById("invCaja").getBoundingClientRect();
+            tam = { x: e.clientX, w: r.width, k: A.inventario.k || 1 };
+            try { grip.setPointerCapture(e.pointerId); } catch (err) {}
+            e.preventDefault();
+            e.stopPropagation();
+        });
+        grip.addEventListener("pointermove", function (e) {
+            if (!tam) return;
+            A.inventario.k = Math.max(INV_K_MIN, Math.min(INV_K_MAX, tam.k * (tam.w + (e.clientX - tam.x)) / tam.w));
+            aplicarLayoutInv();
+        });
+        function soltarTam() {
+            if (!tam) return;
+            tam = null;
+            A.inventario.k = Math.round(A.inventario.k * 100) / 100;
+            window.Ajustes.guardar();
+        }
+        grip.addEventListener("pointerup", soltarTam);
+        grip.addEventListener("pointercancel", soltarTam);
+        return cab;
+    }
+    window.addEventListener("resize", function () { aplicarLayoutInv(); });
 
     function refrescarInventario() {
         pintarBarra();

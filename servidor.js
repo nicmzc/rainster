@@ -295,6 +295,14 @@ wss.on("connection", function (socket, req) {
                     g: typeof datos.g === "number" ? Math.floor(datos.g) % 100000 : 0,
                     c: sala.jugadores[id].c,
                     col: typeof datos.col === "string" && /^#[0-9a-fA-F]{6}$/.test(datos.col) ? datos.col : "",
+                    // cómo se ve el jugador para los demás (cabeza, manos, ropa, piernas y movimiento)
+                    pi: typeof datos.pi === "number" ? Math.max(-1.6, Math.min(1.6, datos.pi)) : 0,
+                    md: typeof datos.md === "string" && /^[a-z]{0,12}$/.test(datos.md) ? datos.md : "",
+                    mi: typeof datos.mi === "string" && /^[a-z]{0,12}$/.test(datos.mi) ? datos.mi : "",
+                    q: typeof datos.q === "string" && /^([a-z]{0,12},){4}[a-z]{0,12}$/.test(datos.q) ? datos.q : ",,,,",
+                    pl: Number.isInteger(datos.pl) && datos.pl >= 0 && datos.pl <= 8 ? datos.pl : 0,
+                    am: typeof datos.am === "number" ? Math.max(0, Math.min(1, datos.am)) : 0,
+                    ac: datos.ac ? 1 : 0,
                     n: sala.jugadores[id].n
                 };
             }

@@ -1839,7 +1839,8 @@ document.getElementById("btnSalir").addEventListener("click", function () {
                     "font-family:'Cinzel Decorative',serif;color:#fff;";
                 const barra = document.createElement("div");
                 barra.style.cssText = "position:absolute;top:8px;left:0;right:0;text-align:center;pointer-events:none;";
-                barra.innerHTML = '<div style="font-size:0.95rem;letter-spacing:2px;margin-bottom:6px;">Arrastrá cada botón donde quieras</div>';
+                barra.innerHTML = '<div style="font-size:0.95rem;letter-spacing:2px;margin-bottom:2px;">Arrastrá cada botón donde quieras</div>' +
+                    '<div style="font-size:0.75rem;letter-spacing:1px;margin-bottom:6px;opacity:0.8;">Tocá uno para elegirlo y cambiale el tamaño</div>';
                 const fila = document.createElement("div");
                 fila.style.cssText = "pointer-events:auto;display:inline-flex;gap:10px;";
                 function boton(txt, fn) {
@@ -1851,6 +1852,26 @@ document.getElementById("btnSalir").addEventListener("click", function () {
                     fila.appendChild(b);
                 }
                 const fantasmas = [];
+                let elegido = null;
+                function elegir(f) {
+                    elegido = f;
+                    fantasmas.forEach(function (x) { x.el.style.borderColor = x === f ? "#ffb347" : "#fff"; x.el.style.borderStyle = x === f ? "solid" : "dashed"; });
+                }
+                // cambia el tamaño de un botón sin moverle el centro
+                function tamano(f, esc) {
+                    esc = Math.max(0.5, Math.min(2.2, Math.round(esc * 100) / 100));
+                    const cx = parseFloat(f.el.style.left) + f.w / 2, cy = parseFloat(f.el.style.top) + f.w / 2;
+                    f.esc = esc;
+                    f.w = Math.round(f.base * esc);
+                    f.el.style.width = f.w + "px";
+                    f.el.style.height = f.w + "px";
+                    f.el.style.left = Math.max(0, Math.min(W - f.w, cx - f.w / 2)) + "px";
+                    f.el.style.top = Math.max(0, Math.min(H - f.w, cy - f.w / 2)) + "px";
+                }
+                function cambiar(delta) {
+                    if (!elegido) { barra.firstChild.textContent = "Primero tocá un botón"; return; }
+                    tamano(elegido, elegido.esc + delta);
+                }
                 window.Botones.lista().forEach(function (b) {
                     const g = document.createElement("div");
                     g.textContent = b.nombre;
@@ -1858,8 +1879,10 @@ document.getElementById("btnSalir").addEventListener("click", function () {
                         "left:" + (b.cx - b.w / 2) + "px;top:" + (b.cy - b.w / 2) + "px;background:rgba(255,255,255,0.3);" +
                         "border:2px dashed #fff;display:flex;align-items:center;justify-content:center;font-family:sans-serif;" +
                         "font-size:13px;text-align:center;user-select:none;-webkit-user-select:none;touch-action:none;";
+                    const f = { id: b.id, w: b.w, el: g, esc: b.esc || 1, base: b.w / (b.esc || 1) };
                     let dx = 0, dy = 0;
                     g.addEventListener("pointerdown", function (e) {
+                        elegir(f);
                         g.setPointerCapture(e.pointerId);
                         dx = e.clientX - parseFloat(g.style.left);
                         dy = e.clientY - parseFloat(g.style.top);
@@ -1868,18 +1891,20 @@ document.getElementById("btnSalir").addEventListener("click", function () {
                     });
                     g.addEventListener("pointermove", function (e) {
                         if (!g.dataset.mueve) return;
-                        g.style.left = Math.max(0, Math.min(W - b.w, e.clientX - dx)) + "px";
-                        g.style.top = Math.max(0, Math.min(H - b.w, e.clientY - dy)) + "px";
+                        g.style.left = Math.max(0, Math.min(W - f.w, e.clientX - dx)) + "px";
+                        g.style.top = Math.max(0, Math.min(H - f.w, e.clientY - dy)) + "px";
                     });
                     const suelta = function () { g.dataset.mueve = ""; g.style.background = "rgba(255,255,255,0.3)"; };
                     g.addEventListener("pointerup", suelta);
                     g.addEventListener("pointercancel", suelta);
                     fondo.appendChild(g);
-                    fantasmas.push({ id: b.id, w: b.w, el: g });
+                    fantasmas.push(f);
                 });
+                boton("Achicar", function () { cambiar(-0.1); });
+                boton("Agrandar", function () { cambiar(0.1); });
                 boton("Guardar", function () {
                     fantasmas.forEach(function (f) {
-                        window.Botones.poner(f.id, (parseFloat(f.el.style.left) + f.w / 2) / W, (parseFloat(f.el.style.top) + f.w / 2) / H);
+                        window.Botones.poner(f.id, (parseFloat(f.el.style.left) + f.w / 2) / W, (parseFloat(f.el.style.top) + f.w / 2) / H, f.esc);
                     });
                     guardar();
                     window.Botones.aplicar();

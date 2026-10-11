@@ -1556,6 +1556,7 @@ document.getElementById("btnSalir").addEventListener("click", function () {
             }
 
             function salirDelJuego() {
+                try { guardarTiempoJugado(); } catch (e) {}      // se guarda dónde estabas para volver al mismo lugar
                 if (servidorActual && leerTokens()[servidorActual]) {
                     if (confirm("Sos el host de este servidor.\n\nAceptar: cerrar el servidor para todos\nCancelar: salir y dejarlo abierto")) {
                         window.cerrandoMiServidor = true;

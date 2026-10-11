@@ -409,13 +409,20 @@ if (!gl) {
             document.pointerLockElement === canvas ? "none" : "block";
     });
 
+    // Al cambiar el tamaño el canvas se borra. En pausa el juego no dibuja, así que hay que avisar
+    // para que vuelva a dibujar la escena (si no, detrás del menú de pausa se ve todo blanco).
+    let pantallaCambio = false;
     function ajustarPantalla() {
-        canvas.width = window.innerWidth;
-        canvas.height = window.innerHeight;
+        if (canvas.width !== window.innerWidth) canvas.width = window.innerWidth;
+        if (canvas.height !== window.innerHeight) canvas.height = window.innerHeight;
         gl.viewport(0, 0, canvas.width, canvas.height);
+        pantallaCambio = true;
     }
 
     window.addEventListener("resize", ajustarPantalla);
+    // al girar el celular el tamaño nuevo a veces llega un rato después
+    window.addEventListener("orientationchange", function () { setTimeout(ajustarPantalla, 150); setTimeout(ajustarPantalla, 500); });
+    document.addEventListener("visibilitychange", function () { if (!document.hidden) pantallaCambio = true; });
     ajustarPantalla();
 
     // ===== MULTIJUGADOR =====
@@ -1362,17 +1369,21 @@ if (!gl) {
         return peor;
     }
 
-    // Según qué tan fuerte caíste: esguince, esguince en las dos, fractura, las dos fracturas
-    function lesionPorCaida(v) {
+    // Según qué tan fuerte caíste: esguince, esguince en las dos, fractura, las dos fracturas.
+    // El daño sale de las lesiones (así lo que perdés de vida coincide con lo que te pasó en las piernas):
+    // esguince 8, fractura 22 por pierna, y si la caída es todavía más alta se suma un extra.
+    const DANO_PIERNA = { 0: 0, 1: 8, 2: 22 };
+    function tramoCaida(v) {
+        if (v < 8.5) return [1, 0];
+        if (v < 9.5) return [1, 1];
+        if (v < 11.5) return [2, Math.random() < 0.5 ? 1 : 0];
+        return [2, 2];
+    }
+    function lesionPorCaida(tramo) {
         if (!sv.activo || !sv.vivo) return;
         const lado = Math.random() < 0.5 ? 0 : 1;
-        let nA, nB;
-        if (v < 8.5) { nA = 1; nB = 0; }
-        else if (v < 9.5) { nA = 1; nB = 1; }
-        else if (v < 11.5) { nA = 2; nB = Math.random() < 0.5 ? 1 : 0; }
-        else { nA = 2; nB = 2; }
         const avisos = [];
-        [[lado, nA], [1 - lado, nB]].forEach(function (x) {
+        [[lado, tramo[0]], [1 - lado, tramo[1]]].forEach(function (x) {
             if (herirPierna(x[0], x[1])) {
                 avisos.push((x[1] === 2 ? "Te quebraste" : "Te esguinzaste") + " la pierna " + NOMBRE_PIERNA[x[0]]);
             }
@@ -1382,9 +1393,11 @@ if (!gl) {
 
     function aterrizar(v) {
         if (v > 4) ruidoPulso = Math.max(ruidoPulso, 6 + v * 1.4);
-        if (v <= 7.5 || !sv.activo || !sv.vivo) return;
-        danar((v - 7.5) * 12, "Moriste por una caída.");   // más de 2 metros de caída duele
-        lesionPorCaida(v);
+        if (v <= 7.5 || !sv.activo || !sv.vivo) return;           // más de 2 metros de caída duele
+        const tramo = tramoCaida(v);
+        const dano = DANO_PIERNA[tramo[0]] + DANO_PIERNA[tramo[1]] + Math.max(0, v - 11.5) * 10;
+        danar(dano, "Moriste por una caída.");
+        lesionPorCaida(tramo);
     }
 
     // Qué tan rápido caminás con las piernas lastimadas (las muletas ayudan)
@@ -1844,6 +1857,7 @@ if (!gl) {
         barraSel: -1,    // hueco de la barra tocado una vez (el segundo toque lo usa)
         manoD: null,     // objeto en la mano derecha (se ve afuera del inventario, junto a la barra)
         manoI: null,     // objeto en la mano izquierda (se ve en el inventario)
+        cargaMano: { D: null, I: null },   // lo que lleva adentro una mochila que tenés en la mano
         abierto: false
     };
     window.inventarioAbierto = false;
@@ -1926,6 +1940,24 @@ if (!gl) {
         return true;
     }
 
+    // Una mochila lleva sus cosas adentro estés donde estés: puesta, en una mano o tirada en el piso.
+    // Estas dos funciones sacan y devuelven lo que tiene adentro cuando la mochila cambia de lugar.
+    function sacarCarga(r) {
+        let c = null;
+        if (r.t === "e" && r.k === "espalda") c = inv.cont.espalda ? inv.cont.espalda.slice() : null;
+        else if (r.t === "h") { c = inv.cargaMano[r.k]; inv.cargaMano[r.k] = null; }
+        return c && c.some(function (x) { return !!x; }) ? c : null;
+    }
+    function ponerCarga(r, c) {
+        if (!c) return;
+        if (r.t === "e" && r.k === "espalda") {
+            if (!inv.cont.espalda) return;
+            for (let i = 0; i < inv.cont.espalda.length; i++) inv.cont.espalda[i] = c[i] || null;
+        } else if (r.t === "h") {
+            inv.cargaMano[r.k] = c;
+        }
+    }
+
     function mover(o, d) {
         if (mismoRef(o, d)) return false;
         const a = getRef(o), b = getRef(d);
@@ -1933,12 +1965,17 @@ if (!gl) {
         if (d.t === "c" && !inv.cont[d.k]) return false;
         if (!puedeEn(d, a)) { avisar("No va ahí", 1500); return false; }
         if (b && !puedeEn(o, b)) { avisar("No entra", 1500); return false; }
-        if (o.t === "e" && !contenedorVacio(o.k)) { avisar("Vaciá los bolsillos", 1500); return false; }
-        if (d.t === "e" && b && !contenedorVacio(d.k)) { avisar("Vaciá los bolsillos", 1500); return false; }
+        if (o.t === "e" && o.k !== "espalda" && !contenedorVacio(o.k)) { avisar("Vaciá los bolsillos", 1500); return false; }
+        if (d.t === "e" && d.k !== "espalda" && b && !contenedorVacio(d.k)) { avisar("Vaciá los bolsillos", 1500); return false; }
         if (o.t === "e" && d.t === "c" && d.k === o.k) return false;
+        // la mochila se lleva lo que tiene adentro
+        const cA = a === "mochila" ? sacarCarga(o) : null;
+        const cB = b === "mochila" ? sacarCarga(d) : null;
         setRef(o, b);
         setRef(d, a);
         ajustarContenedores();
+        if (a === "mochila") ponerCarga(d, cA);
+        if (b === "mochila") ponerCarga(o, cB);
         return true;
     }
 
@@ -1955,10 +1992,11 @@ if (!gl) {
         }
         return null;
     }
-    function agregarItem(id) {
+    function agregarItem(id, carga) {
         const h = primerHueco(id);
         if (!h) return false;
         setRef(h, id);
+        if (id === "mochila") ponerCarga(h, carga || null);
         refrescarInventario();
         return true;
     }
@@ -2000,12 +2038,15 @@ if (!gl) {
     function tirar(r) {
         const id = getRef(r);
         if (!id) return;
-        if (r.t === "e" && !contenedorVacio(r.k)) { avisar("Vaciá los bolsillos", 1500); return; }
+        if (r.t === "e" && r.k !== "espalda" && !contenedorVacio(r.k)) { avisar("Vaciá los bolsillos", 1500); return; }
+        const carga = id === "mochila" ? sacarCarga(r) : null;     // la mochila se tira con todo lo que tiene adentro
         setRef(r, null);
         ajustarContenedores();
         avisar("Tirado", 1000);
         const x = px - Math.sin(yaw) * 0.9, z = pz - Math.cos(yaw) * 0.9;
-        inv.mundo.push({ id: id, x: x, y: alturaSuelo(x, z, saltoY, 0.1), z: z });
+        const suelto = { id: id, x: x, y: alturaSuelo(x, z, saltoY, 0.1), z: z };
+        if (carga) suelto.c = carga;
+        inv.mundo.push(suelto);
         inv.sel = null;
         refrescarInventario();
     }
@@ -2024,7 +2065,7 @@ if (!gl) {
     function recogerCercano() {
         const it = itemCercano();
         if (!it) return false;
-        if (agregarItem(it.id)) {
+        if (agregarItem(it.id, it.c)) {
             inv.mundo.splice(inv.mundo.indexOf(it), 1);
             avisar("Recogiste: " + ITEMS[it.id].n, 2000);
         } else {
@@ -2223,10 +2264,10 @@ if (!gl) {
             const cpie = n === 2 ? mezclar(colPie, rojo, 0.3) : colPie;
             const pierna = function (b) { b.pi = i; return b; };         // para balancearla al caminar
             if (n === 2) {
-                // fractura: la parte de abajo se salió un poco hacia afuera y adelante, y está trizada
-                pierna(add(x, 0.42, 0.7, 0, ap / 2, lp, cp, 1));
-                pierna(add(x + lado * 0.07, 0.18, 0.42, 0.07, ap / 2, lp, cp, 2));
-                pierna(add(x + lado * 0.07, 0, 0.18, 0.07, apie / 2, lpie, cpie, 3));
+                // fractura: la parte de abajo se salió un poco hacia afuera y adelante (la pierna se ve doblada)
+                pierna(add(x, 0.42, 0.7, 0, ap / 2, lp, cp));
+                pierna(add(x + lado * 0.07, 0.18, 0.42, 0.07, ap / 2, lp, cp));
+                pierna(add(x + lado * 0.07, 0, 0.18, 0.07, apie / 2, lpie, cpie));
             } else {
                 pierna(add(x, 0, 0.18, 0, apie / 2, lpie, cpie));
                 pierna(add(x, 0.18, 0.7, 0, ap / 2, lp, cp));
@@ -2890,6 +2931,7 @@ if (!gl) {
         inv.barraSel = -1;
         inv.manoD = null;
         inv.manoI = null;
+        inv.cargaMano = { D: null, I: null };
         inv.abierto = false;
         window.inventarioAbierto = false;
         invFondo.classList.remove("visible");
@@ -2901,6 +2943,11 @@ if (!gl) {
             }
             inv.manoD = ok(datos.manoD);
             inv.manoI = ok(datos.manoI);
+            const okCarga = function (c) { return Array.isArray(c) ? c.slice(0, 10).map(ok) : null; };
+            ["D", "I"].forEach(function (k) {
+                const c = datos.cargaMano ? okCarga(datos.cargaMano[k]) : null;
+                if (c && inv["mano" + k] === "mochila") inv.cargaMano[k] = c;
+            });
             // partidas viejas: la mochila no se guarda en la barra, pasa a una mano
             inv.barra.forEach(function (id, i) {
                 if (id !== "mochila") return;
@@ -2908,13 +2955,27 @@ if (!gl) {
                 else if (!inv.manoI) { inv.manoI = id; inv.barra[i] = null; }
             });
             ajustarContenedores();
+            // volvés al mismo lugar donde dejaste la partida
+            const ps = datos.pos;
+            if (ps && isFinite(ps.x) && isFinite(ps.z) && Math.abs(ps.x) < 500 && Math.abs(ps.z) < 500) {
+                const py = isFinite(ps.y) && ps.y > 0 && ps.y < 50 ? +ps.y : 0;      // por si estabas arriba de un objeto
+                let libre = true;
+                try { libre = !choca(+ps.x, +ps.z, py); } catch (e) {}
+                if (libre) {
+                    px = +ps.x; pz = +ps.z; saltoY = py;
+                    if (isFinite(ps.yaw)) yaw = +ps.yaw;
+                    if (isFinite(ps.pitch)) pitch = Math.max(-1.5, Math.min(1.5, +ps.pitch));
+                }
+            }
             for (const k of ORDEN_CONT) {
                 if (!inv.cont[k] || !datos.cont || !Array.isArray(datos.cont[k])) continue;
                 for (let i = 0; i < inv.cont[k].length; i++) inv.cont[k][i] = ok(datos.cont[k][i]);
             }
             inv.mundo = Array.isArray(datos.mundo)
                 ? datos.mundo.filter(function (m) { return m && ok(m.id); }).map(function (m) {
-                    return { id: m.id, x: +m.x || 0, y: +m.y || 0, z: +m.z || 0 };
+                    const it = { id: m.id, x: +m.x || 0, y: +m.y || 0, z: +m.z || 0 };
+                    if (m.id === "mochila" && okCarga(m.c)) it.c = okCarga(m.c);
+                    return it;
                 })
                 : MUNDO_INICIAL.map(function (m) { return Object.assign({}, m); });
             // partidas guardadas antes de los combates: aparecen los objetos nuevos una sola vez
@@ -2938,8 +2999,10 @@ if (!gl) {
             equipo: Object.assign({}, inv.equipo),
             manoD: inv.manoD,
             manoI: inv.manoI,
+            cargaMano: JSON.parse(JSON.stringify(inv.cargaMano)),
+            pos: { x: px, y: saltoY, z: pz, yaw: yaw, pitch: pitch },
             cont: JSON.parse(JSON.stringify(inv.cont)),
-            mundo: inv.mundo.map(function (m) { return { id: m.id, x: m.x, y: m.y, z: m.z }; })
+            mundo: inv.mundo.map(function (m) { var o = { id: m.id, x: m.x, y: m.y, z: m.z }; if (m.c) o.c = m.c; return o; })
         };
     }
 
@@ -3436,16 +3499,50 @@ if (!gl) {
     // ===== BUCLE DEL JUEGO =====
     let anterior = performance.now();
 
+    let tCongelado = null, ultimoDibujoPausa = 0;
+
+    // Dibuja la escena entera con la cámara donde está (también se usa en pausa)
+    function dibujarEscena(ahora, limpBob) {
+        if (!estacionesJuego.ambiente) return;
+        const proyeccion = perspectiva(
+            Math.PI / 3, canvas.width / canvas.height, 0.1, 100
+        );
+        const vista = multiplicar(
+            rotarX(-pitch),
+            multiplicar(rotarY(-yaw), trasladar(-px, -(alturaCam + limpBob + saltoY), -pz))
+        );
+        gl.uniformMatrix4fv(uCamara, false, multiplicar(proyeccion, vista));
+
+        const cielo = estacionesJuego.ambiente.cielo;
+        gl.clearColor(cielo[0], cielo[1], cielo[2], 1);
+        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+        configurarAtributos(buffer);
+        gl.drawArrays(gl.TRIANGLES, 0, cantidad);
+        dibujarOtros();
+        dibujarItems(ahora / 1000);
+        dibujarSombras();
+        dibujarMano(proyeccion, ahora / 1000);
+        dibujarMapa();
+    }
+
     function animar(ahora) {
         const msReales = ahora - anterior;
         const dt = Math.min(msReales / 1000, 0.05);
         anterior = ahora;
        
-        // En pausa el juego queda quieto
+        // En pausa el juego queda quieto, pero se vuelve a dibujar la escena si cambió la pantalla
+        // (girar el celular, bajar la barra de arriba, volver de otra app) para que no quede en blanco
         if (window.juegoPausado) {
+            if (tCongelado === null) tCongelado = ahora;
+            if (pantallaCambio || ahora - ultimoDibujoPausa > 400) {
+                pantallaCambio = false;
+                ultimoDibujoPausa = ahora;
+                try { dibujarEscena(tCongelado, 0); } catch (e) {}
+            }
             requestAnimationFrame(animar);
             return;
         }
+        tCongelado = null;
 
         const multEstacion = actualizarEstaciones(dt, msReales);
         const multSupervivencia = actualizarSupervivencia(dt, msReales);
@@ -3552,26 +3649,8 @@ if (!gl) {
         const limpBob = (lesion > 0 && seMueve && postura !== 2) ? -Math.abs(Math.sin(ahora / 1000 * (4 + (corre ? 2 : 0)))) * 0.035 * Math.min(lesion, 3) : 0;
         actualizarBotonesTactiles();
 
-        // Cámara
-        const proyeccion = perspectiva(
-            Math.PI / 3, canvas.width / canvas.height, 0.1, 100
-        );
-        const vista = multiplicar(
-            rotarX(-pitch),
-            multiplicar(rotarY(-yaw), trasladar(-px, -(alturaCam + limpBob + saltoY), -pz))
-        );
-        gl.uniformMatrix4fv(uCamara, false, multiplicar(proyeccion, vista));
-
-        const cielo = estacionesJuego.ambiente.cielo;
-        gl.clearColor(cielo[0], cielo[1], cielo[2], 1);
-        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-        configurarAtributos(buffer);
-        gl.drawArrays(gl.TRIANGLES, 0, cantidad);
-        dibujarOtros();
-        dibujarItems(ahora / 1000);
-        dibujarSombras();
-        dibujarMano(proyeccion, ahora / 1000);
-        dibujarMapa();
+        // Cámara y dibujo
+        dibujarEscena(ahora, limpBob);
 
         requestAnimationFrame(animar);
     }

@@ -72,59 +72,364 @@ if (!gl) {
         }
     }
 
+    // ===== MUNDO ALEATORIO =====
+    // Cada partida (o cada servidor) tiene una semilla: con la misma semilla sale siempre el mismo mapa,
+    // así todos los jugadores de un servidor ven las mismas calles, casas y muebles.
+    const MUNDO_MITAD = 45;                 // el mapa va de -45 a 45 (90 x 90)
+    const ALTO_PARED = 3;
+    let CALLES = [];                        // [x1, z1, x2, z2]
+    let CASAS = [];                         // [x1, z1, x2, z2]
+    let CAMAS = [];                         // [x1, z1, x2, z2]
+    let MUNDO_INICIAL = [];                 // objetos sueltos { id, x, y, z }
+    let SPAWN = { x: 0, z: 9, yaw: 0 };
+    let semillaMundo = null;
+
     const PARED = [0.55, 0.50, 0.45];
     const MADERA = [0.45, 0.30, 0.18];
     const CAJA = [0.55, 0.42, 0.22];
     const ESCOMBRO = [0.40, 0.38, 0.36];
-
-    // Suelo
-    caja(-25, -0.1, -25, 25, 0, 25, [0.25, 0.26, 0.28], false);
-
-    // Calles y casas (el mapa usa estos mismos datos): [x1, z1, x2, z2]
-    const MUNDO_MITAD = 25;
-    const CALLES = [[-25, 11, 25, 15], [14, -25, 18, 11], [14, 15, 18, 25]];
-    const CASAS = [[-5, -5, 5, 5]];
     const CALLE_COLOR = [0.38, 0.38, 0.40];
-    for (const c of CALLES) {
-        caja(c[0], -0.1, c[1], c[2], 0.02, c[3], CALLE_COLOR, false);
+    const TECHO_COLOR = [0.30, 0.18, 0.15];
+    const PISO_CASA = [0.32, 0.25, 0.19];
+
+    function crearAzar(semilla) {
+        let a = semilla >>> 0;
+        return function () {
+            a = (a + 0x6D2B79F5) >>> 0;
+            let t = a;
+            t = Math.imul(t ^ (t >>> 15), t | 1);
+            t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+            return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+        };
     }
 
-    // Casa (de x -5 a 5, z -5 a 5)
-    // Pared de adelante, con puerta en el medio
-    caja(-5, 0, 4.7, -1, 3, 5, PARED, true);
-    caja(1, 0, 4.7, 5, 3, 5, PARED, true);
-    caja(-1, 2.2, 4.7, 1, 3, 5, PARED, false);
-    // Pared de atrás, con ventana
-    caja(-5, 0, -5, 2, 3, -4.7, PARED, true);
-    caja(3.5, 0, -5, 5, 3, -4.7, PARED, true);
-    caja(2, 0, -5, 3.5, 0.9, -4.7, PARED, true);
-    caja(2, 2.1, -5, 3.5, 3, -4.7, PARED, false);
-    // Pared izquierda y derecha
-    caja(-5, 0, -4.7, -4.7, 3, 4.7, PARED, true);
-    caja(4.7, 0, -4.7, 5, 3, 4.7, PARED, true);
-
-    // Muebles adentro
-    caja(-3.5, 0, -3.5, -1.5, 0.8, -2.5, MADERA, true);       // mesa
-    caja(-4.5, 0, 0, -2.5, 0.5, 2.5, [0.6, 0.3, 0.3], true);  // cama
-    caja(3.5, 0, -4.5, 4.6, 2, -3.5, MADERA, true);           // estante
-    caja(2.5, 0, 1, 3.5, 1, 2, CAJA, true);                   // caja
-    caja(3.5, 0, 1.5, 4.5, 0.6, 2.5, CAJA, true);             // caja chica
-
-    // Afuera
-    caja(-9, 0, 6, -7.5, 1.2, 7.5, CAJA, true);
-    caja(-7.8, 0, 7.5, -6.8, 0.7, 8.5, CAJA, true);
-    caja(8, 0, -2, 9, 2.5, -1, ESCOMBRO, true);
-    caja(7, 0, 5, 10, 1, 5.5, ESCOMBRO, true);
-    caja(-12, 0, -8, -11, 4, -7, ESCOMBRO, true);
-    caja(-14, 0, -2, -12.5, 2, -0.5, ESCOMBRO, true);
-    caja(10, 0, -9, 11, 5, -8, ESCOMBRO, true);
-
-    const cantidad = datos.length / 6;
-    const vertices = new Float32Array(datos);
-
     const buffer = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-    gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STATIC_DRAW);
+    let cantidad = 0;
+
+    function construirMundo(semilla) {
+        semilla = (semilla >>> 0) || 1;
+        semillaMundo = semilla;
+        datos.length = 0;
+        colisiones.length = 0;
+        CALLES = []; CASAS = []; CAMAS = []; MUNDO_INICIAL = [];
+
+        const R = crearAzar(semilla);
+        const rnd = function (a, b) { return a + R() * (b - a); };
+        const ent = function (a, b) { return Math.floor(rnd(a, b + 1)); };
+        const elegir = function (l) { return l[Math.floor(R() * l.length)]; };
+        const M = MUNDO_MITAD;
+        const solapa = function (a, b, m) {      // dos rectángulos [x1, z1, x2, z2] (con margen m)
+            return a[0] < b[2] + m && a[2] > b[0] - m && a[1] < b[3] + m && a[3] > b[1] - m;
+        };
+
+        // Suelo
+        caja(-M, -0.1, -M, M, 0, M, [0.25, 0.26, 0.28], false);
+
+        // Muro de afuera: que no te dejen salir del mapa
+        caja(-M - 1, 0, -M - 1, M + 1, 3, -M, ESCOMBRO, true);
+        caja(-M - 1, 0, M, M + 1, 3, M + 1, ESCOMBRO, true);
+        caja(-M - 1, 0, -M, -M, 3, M, ESCOMBRO, true);
+        caja(M, 0, -M, M + 1, 3, M, ESCOMBRO, true);
+
+        // ----- Calles: 1 o 2 en cada dirección, en lugares y con anchos al azar -----
+        function centrosCalles(n) {
+            const lista = [];
+            for (let i = 0; i < 60 && lista.length < n; i++) {
+                const c = rnd(-M + 18, M - 18);
+                if (lista.every(function (o) { return Math.abs(o - c) >= 26; })) lista.push(c);
+            }
+            if (lista.length === 0) lista.push(0);
+            return lista.sort(function (a, b) { return a - b; });
+        }
+        const callesH = centrosCalles(ent(1, 2)).map(function (c) { const w = rnd(4, 5.6); return [c - w / 2, c + w / 2]; });   // z
+        const callesV = centrosCalles(ent(1, 2)).map(function (c) { const w = rnd(4, 5.6); return [c - w / 2, c + w / 2]; });   // x
+        callesH.forEach(function (c) { CALLES.push([-M, c[0], M, c[1]]); });
+        callesV.forEach(function (c) { CALLES.push([c[0], -M, c[1], M]); });
+        CALLES.forEach(function (c) { caja(c[0], -0.1, c[1], c[2], 0.02, c[3], CALLE_COLOR, false); });
+
+        // Manzanas: los terrenos que quedan entre las calles
+        function tramos(calles) {
+            const t = [];
+            let ini = -M;
+            calles.forEach(function (c) { t.push([ini, c[0]]); ini = c[1]; });
+            t.push([ini, M]);
+            return t;
+        }
+        const tx = tramos(callesV), tz = tramos(callesH);
+        const manzanas = [];
+        tx.forEach(function (ax, i) {
+            tz.forEach(function (az, j) {
+                manzanas.push({
+                    r: [ax[0], az[0], ax[1], az[1]],
+                    calle: { xm: i > 0, xM: i < tx.length - 1, zm: j > 0, zM: j < tz.length - 1 }   // qué lados tienen calle
+                });
+            });
+        });
+
+        // ----- Casas -----
+        const casas = [];
+        const muebles = [];     // en el mundo: [x1, z1, x2, z2, alto]
+        const pasillos = [];    // zonas que deben quedar libres afuera (frente de las puertas)
+
+        function construirCasa(W, D, cx, cz, f) {
+            const w = W / 2, d = D / 2, t = 0.3;
+            // pasa de las coordenadas de la casa (la puerta mira a +z) a las del mundo
+            function T(x, z) {
+                if (f === 0) return [cx + x, cz + z];
+                if (f === 1) return [cx - x, cz - z];
+                if (f === 2) return [cx + z, cz - x];
+                return [cx - z, cz + x];
+            }
+            function rectMundo(x1, z1, x2, z2) {
+                const a = T(x1, z1), b = T(x2, z2);
+                return [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[0], b[0]), Math.max(a[1], b[1])];
+            }
+            function cl(x1, y1, z1, x2, y2, z2, col, solida) {
+                const r = rectMundo(x1, z1, x2, z2);
+                caja(r[0], y1, r[1], r[2], y2, r[3], col, solida);
+            }
+            // Pared con aberturas (puertas y ventanas). horiz = la pared va a lo largo de x.
+            function pared(horiz, fa, fb, a, b, aberturas) {
+                const pieza = function (p1, p2, y1, y2, solida, col) {
+                    if (p2 - p1 < 0.01) return;
+                    if (horiz) cl(p1, y1, fa, p2, y2, fb, col || PARED, solida);
+                    else cl(fa, y1, p1, fb, y2, p2, col || PARED, solida);
+                };
+                let cur = a;
+                aberturas.slice().sort(function (p, q) { return p.a - q.a; }).forEach(function (ab) {
+                    pieza(cur, ab.a, 0, ALTO_PARED, true);
+                    if (ab.y1 > 0) pieza(ab.a, ab.b, 0, ab.y1, true);
+                    pieza(ab.a, ab.b, ab.y2, ALTO_PARED, false);
+                    cur = ab.b;
+                });
+                pieza(cur, b, 0, ALTO_PARED, true);
+            }
+
+            // Piso de madera
+            cl(-w, 0, -d, w, 0.02, d, PISO_CASA, false);
+
+            // Puerta (al frente) y ventanas
+            const dp = 1.6;
+            const px0 = rnd(-w + 1.6, w - 2.9);
+            const puerta = { a: px0 - dp / 2, b: px0 + dp / 2, y1: 0, y2: 2.2 };
+            const ventanasDe = function (lo, hi, max) {
+                const lista = [];
+                const n = ent(0, max);
+                for (let i = 0; i < n; i++) {
+                    for (let k = 0; k < 12; k++) {
+                        const a = rnd(lo, hi - 1.2);
+                        if (hi - 1.2 < lo) break;
+                        if (lista.every(function (o) { return a + 1.2 < o.a - 0.5 || a > o.b + 0.5; })) {
+                            lista.push({ a: a, b: a + 1.2, y1: 0.9, y2: 2.1 });
+                            break;
+                        }
+                    }
+                }
+                return lista;
+            };
+            let vFrente = ventanasDe(-w + t + 0.7, puerta.a - 0.7, 1);
+            let vAtras = ventanasDe(-w + t + 0.7, w - t - 0.7, 2);
+            let vIzq = ventanasDe(-d + t + 0.7, d - t - 0.7, 1);
+            let vDer = ventanasDe(-d + t + 0.7, d - t - 0.7, 1);
+            if (vFrente.length + vAtras.length + vIzq.length + vDer.length < 2) {
+                vAtras = ventanasDe(-w + t + 0.7, w - t - 0.7, 2);
+                if (vAtras.length === 0) vAtras = [{ a: -0.6, b: 0.6, y1: 0.9, y2: 2.1 }];
+            }
+
+            pared(true, d - t, d, -w, w, [puerta].concat(vFrente));             // adelante
+            pared(true, -d, -d + t, -w, w, vAtras);                              // atrás
+            pared(false, -w, -w + t, -d + t, d - t, vIzq);                       // izquierda
+            pared(false, w - t, w, -d + t, d - t, vDer);                         // derecha
+
+            // Marco y hoja de la puerta (abierta contra la pared de adentro) y travesaños de las ventanas
+            cl(puerta.a - 0.1, 0, d - t - 0.05, puerta.a, 2.3, d + 0.05, MADERA, false);
+            cl(puerta.b, 0, d - t - 0.05, puerta.b + 0.1, 2.3, d + 0.05, MADERA, false);
+            cl(puerta.a - 0.1, 2.2, d - t - 0.05, puerta.b + 0.1, 2.3, d + 0.05, MADERA, false);
+            cl(puerta.b + 0.1, 0.05, d - t - 0.08, puerta.b + 0.1 + dp - 0.1, 2.15, d - t - 0.01, [0.38, 0.25, 0.15], false);
+            vFrente.forEach(function (v) { cl((v.a + v.b) / 2 - 0.03, v.y1, d - t + 0.1, (v.a + v.b) / 2 + 0.03, v.y2, d - t + 0.2, MADERA, false); });
+            vAtras.forEach(function (v) { cl((v.a + v.b) / 2 - 0.03, v.y1, -d + t - 0.2, (v.a + v.b) / 2 + 0.03, v.y2, -d + t - 0.1, MADERA, false); });
+            vIzq.forEach(function (v) { cl(-w + t - 0.2, v.y1, (v.a + v.b) / 2 - 0.03, -w + t - 0.1, v.y2, (v.a + v.b) / 2 + 0.03, MADERA, false); });
+            vDer.forEach(function (v) { cl(w - t + 0.1, v.y1, (v.a + v.b) / 2 - 0.03, w - t + 0.2, v.y2, (v.a + v.b) / 2 + 0.03, MADERA, false); });
+
+            // Pared de adentro (a veces), con un pasillo
+            const prohibido = [];      // zonas libres de muebles, en las coordenadas de la casa
+            const tabiques = [];       // paredes de adentro, en el mundo
+            prohibido.push([puerta.a - 0.6, d - t - 2.4, puerta.b + dp + 0.4, d]);
+            if ((W >= 10 || D >= 10) && R() < 0.65) {
+                const zp = rnd(-d + 3.8, d - 3.8);
+                const gx = rnd(-w + t + 1.6, w - t - 1.6);
+                pared(true, zp - 0.1, zp + 0.1, -w + t, w - t, [{ a: gx - 0.7, b: gx + 0.7, y1: 0, y2: 2.2 }]);
+                tabiques.push(rectMundo(-w + t, zp - 0.1, w - t, zp + 0.1));
+                prohibido.push([gx - 1.3, zp - 1.1, gx + 1.3, zp + 1.1]);
+                prohibido.push([-w + t, zp - 0.5, w - t, zp + 0.5]);
+            }
+
+            // Techo: tres capas, la de abajo se pasa un poco de las paredes
+            cl(-w - 0.4, ALTO_PARED + 0.02, -d - 0.4, w + 0.4, ALTO_PARED + 0.27, d + 0.4, TECHO_COLOR, false);
+            cl(-w + 0.6, ALTO_PARED + 0.27, -d + 0.6, w - 0.6, ALTO_PARED + 0.65, d - 0.6, [0.34, 0.21, 0.17], false);
+            cl(-w + 2.0, ALTO_PARED + 0.65, -d + 2.0, w - 2.0, ALTO_PARED + 1.0, d - 2.0, [0.28, 0.16, 0.13], false);
+
+            // Muebles
+            const tipos = [
+                { n: "mesa", a: 2, b: 1, h: 0.8, c: MADERA },
+                { n: "estante", a: 1.1, b: 0.9, h: 2, c: MADERA },
+                { n: "armario", a: 1.4, b: 0.8, h: 2.2, c: [0.36, 0.24, 0.15] },
+                { n: "caja", a: 1, b: 1, h: 1, c: CAJA },
+                { n: "cajita", a: 1, b: 1, h: 0.6, c: CAJA },
+                { n: "sofa", a: 2.2, b: 0.9, h: 0.7, c: [0.35, 0.40, 0.45] },
+                { n: "mesita", a: 0.8, b: 0.8, h: 0.7, c: MADERA }
+            ];
+            const locales = [];       // [x1, z1, x2, z2, alto]
+            function intentarMueble(tipo) {
+                for (let k = 0; k < 50; k++) {
+                    let a = tipo.a, b = tipo.b;
+                    if (R() < 0.5) { const s = a; a = b; b = s; }
+                    const lx1 = -w + t + 0.12, lx2 = w - t - 0.12, lz1 = -d + t + 0.12, lz2 = d - t - 0.12;
+                    let x = rnd(lx1, lx2 - a), z = rnd(lz1, lz2 - b);
+                    if (R() < 0.7) {                                   // pegado a una pared
+                        const lado = ent(0, 3);
+                        if (lado === 0) x = lx1; else if (lado === 1) x = lx2 - a;
+                        else if (lado === 2) z = lz1; else z = lz2 - b;
+                    }
+                    const r = [x, z, x + a, z + b];
+                    if (r[0] < lx1 - 0.001 || r[2] > lx2 + 0.001 || r[1] < lz1 - 0.001 || r[3] > lz2 + 0.001) continue;
+                    if (prohibido.some(function (p) { return solapa(r, p, 0); })) continue;
+                    if (locales.some(function (o) { return solapa(r, o, 0.55); })) continue;
+                    locales.push([r[0], r[1], r[2], r[3], tipo.h]);
+                    cl(r[0], 0, r[1], r[2], tipo.h, r[3], tipo.c, true);
+                    if (tipo.n === "cama") {
+                        cl(r[0], tipo.h, r[1], r[2], tipo.h + 0.12, r[3], [0.78, 0.74, 0.70], false);    // almohada/sábana
+                        CAMAS.push(rectMundo(r[0], r[1], r[2], r[3]));
+                    }
+                    const mw = rectMundo(r[0], r[1], r[2], r[3]);
+                    muebles.push([mw[0], mw[1], mw[2], mw[3], tipo.h]);
+                    return true;
+                }
+                return false;
+            }
+            intentarMueble({ n: "cama", a: 2, b: 2.6, h: 0.5, c: [0.6, 0.3, 0.3] });
+            const cuantos = ent(3, 7);
+            for (let i = 0; i < cuantos; i++) intentarMueble(elegir(tipos));
+
+            const rm = rectMundo(-w, -d, w, d);
+            CASAS.push(rm);
+            const frente = T(px0, d + 2.8);
+            pasillos.push([frente[0] - 2.5, frente[1] - 2.5, frente[0] + 2.5, frente[1] + 2.5]);
+            const normal = [[0, 1], [0, -1], [1, 0], [-1, 0]][f];
+            casas.push({
+                rect: rm, locales: locales, tabiques: tabiques, T: T, w: w, d: d, t: t,
+                spawn: { x: T(px0, d + 3)[0], z: T(px0, d + 3)[1], yaw: Math.atan2(normal[0], normal[1]) }
+            });
+        }
+
+        // Cada manzana recibe 0 a 2 casas, mirando a una de sus calles
+        manzanas.forEach(function (mz) {
+            const objetivo = ent(1, 2);
+            let puestas = 0;
+            for (let intento = 0; intento < 25 && puestas < objetivo; intento++) {
+                const W = rnd(8, 13), D = rnd(8, 12);
+                const lados = [];
+                if (mz.calle.zM) lados.push(0);       // mira a +z
+                if (mz.calle.zm) lados.push(1);       // mira a -z
+                if (mz.calle.xM) lados.push(2);       // mira a +x
+                if (mz.calle.xm) lados.push(3);       // mira a -x
+                const f = elegir(lados);
+                const ancho = f < 2 ? W : D, fondo = f < 2 ? D : W;     // tamaño en el mundo
+                const r = mz.r;
+                const libreX = (r[2] - r[0]) - ancho - 5, libreZ = (r[3] - r[1]) - fondo - 5;
+                if (libreX < 0 || libreZ < 0) continue;
+                const x1 = r[0] + 2.5 + R() * libreX, z1 = r[1] + 2.5 + R() * libreZ;
+                const rect = [x1, z1, x1 + ancho, z1 + fondo];
+                if (casas.some(function (c) { return solapa(rect, c.rect, 3.5); })) continue;
+                construirCasa(W, D, (rect[0] + rect[2]) / 2, (rect[1] + rect[3]) / 2, f);
+                puestas++;
+            }
+        });
+        // por si ninguna entró (no debería pasar): una casa en el centro de la manzana más grande
+        if (casas.length === 0) {
+            const g = manzanas.slice().sort(function (a, b) { return (b.r[2] - b.r[0]) * (b.r[3] - b.r[1]) - (a.r[2] - a.r[0]) * (a.r[3] - a.r[1]); })[0];
+            construirCasa(9, 9, (g.r[0] + g.r[2]) / 2, (g.r[1] + g.r[3]) / 2, g.calle.zM ? 0 : g.calle.zm ? 1 : g.calle.xM ? 2 : 3);
+        }
+
+        // Cajas y escombros sueltos afuera
+        const afuera = [];      // [x1, z1, x2, z2, alto]
+        manzanas.forEach(function (mz) {
+            const n = ent(1, 4);
+            for (let i = 0; i < n; i++) {
+                for (let k = 0; k < 20; k++) {
+                    const esCaja = R() < 0.4;
+                    const a = esCaja ? 1.2 : rnd(1, 2.2), b = esCaja ? 1.2 : rnd(1, 2.2);
+                    const h = esCaja ? rnd(0.7, 1.3) : rnd(1, 4.5);
+                    if ((mz.r[2] - mz.r[0]) < a + 3 || (mz.r[3] - mz.r[1]) < b + 3) break;
+                    const x = rnd(mz.r[0] + 1.5, mz.r[2] - 1.5 - a), z = rnd(mz.r[1] + 1.5, mz.r[3] - 1.5 - b);
+                    const rect = [x, z, x + a, z + b];
+                    if (casas.some(function (c) { return solapa(rect, c.rect, 1.5); })) continue;
+                    if (pasillos.some(function (p) { return solapa(rect, p, 0); })) continue;
+                    if (afuera.some(function (o) { return solapa(rect, o, 1); })) continue;
+                    afuera.push([rect[0], rect[1], rect[2], rect[3], h]);
+                    caja(rect[0], 0, rect[1], rect[2], h, rect[3], esCaja ? CAJA : ESCOMBRO, true);
+                    break;
+                }
+            }
+        });
+
+        // ----- Objetos sueltos -----
+        const puestos = [];
+        function libreDeOtros(x, z) { return puestos.every(function (p) { return Math.hypot(p.x - x, p.z - z) > 0.9; }); }
+        function puntoEnCasa(c) {
+            for (let k = 0; k < 300; k++) {
+                const lx = rnd(-c.w + c.t + 0.5, c.w - c.t - 0.5), lz = rnd(-c.d + c.t + 0.5, c.d - c.t - 0.5);
+                const p = c.T(lx, lz);
+                if (!libreDeOtros(p[0], p[1])) continue;
+                if (c.tabiques.some(function (q) { return solapa([p[0] - 0.3, p[1] - 0.3, p[0] + 0.3, p[1] + 0.3], q, 0); })) continue;
+                let y = 0, ok = true;
+                for (const m of muebles) {
+                    if (p[0] > m[0] - 0.25 && p[0] < m[2] + 0.25 && p[1] > m[1] - 0.25 && p[1] < m[3] + 0.25) {
+                        const dentro = p[0] > m[0] + 0.2 && p[0] < m[2] - 0.2 && p[1] > m[1] + 0.2 && p[1] < m[3] - 0.2;
+                        if (dentro && m[4] <= 1.2) y = Math.max(y, m[4]); else ok = false;
+                    }
+                }
+                if (ok) return { x: p[0], y: y, z: p[1] };
+            }
+            const p = c.T(0, 0);
+            return { x: p[0], y: 0, z: p[1] };
+        }
+        function puntoAfuera() {
+            for (let k = 0; k < 80; k++) {
+                const mz = elegir(manzanas);
+                const x = rnd(mz.r[0] + 1.5, mz.r[2] - 1.5), z = rnd(mz.r[1] + 1.5, mz.r[3] - 1.5);
+                const rect = [x - 0.4, z - 0.4, x + 0.4, z + 0.4];
+                if (casas.some(function (c) { return solapa(rect, c.rect, 0.8); })) continue;
+                if (afuera.some(function (o) { return solapa(rect, o, 0.3); })) continue;
+                if (pasillos.some(function (p) { return solapa(rect, p, 0); })) continue;
+                if (!libreDeOtros(x, z)) continue;
+                return { x: x, y: 0, z: z };
+            }
+            return { x: SPAWN.x + 3, y: 0, z: SPAWN.z };
+        }
+        function poner(id, p) { puestos.push({ id: id, x: p.x, y: p.y, z: p.z }); }
+
+        // La casa más cercana al centro es la de arranque: ahí aparecés enfrente y están la mochila y la ropa
+        const inicial = casas.slice().sort(function (a, b) {
+            const da = Math.hypot((a.rect[0] + a.rect[2]) / 2, (a.rect[1] + a.rect[3]) / 2);
+            const db = Math.hypot((b.rect[0] + b.rect[2]) / 2, (b.rect[1] + b.rect[3]) / 2);
+            return da - db;
+        })[0];
+        SPAWN = inicial.spawn;
+        ["mochila", "camisa", "pantalon", "gorra", "botas", "muletas"].forEach(function (id) { poner(id, puntoEnCasa(inicial)); });
+        ["agua", "agua", "agua", "comida", "comida", "comida", "jarabe", "jarabe", "palo", "cuchillo"].forEach(function (id) {
+            poner(id, puntoEnCasa(elegir(casas)));
+        });
+        ["anabolico", "hacha"].forEach(function (id) {
+            poner(id, R() < 0.5 ? puntoAfuera() : puntoEnCasa(elegir(casas)));
+        });
+        MUNDO_INICIAL = puestos;
+
+        cantidad = datos.length / 6;
+        gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(datos), gl.STATIC_DRAW);
+    }
+    construirMundo(1);
 
     // ===== SHADERS =====
     const vertexShader = gl.createShader(gl.VERTEX_SHADER);
@@ -683,6 +988,7 @@ if (!gl) {
                         window.iniciarEstaciones({
                             modo: "online",
                             reloj: mensaje.reloj,
+                            semilla: mensaje.semilla,
                             desfaseMs: (mensaje.ahora || Date.now()) - Date.now()
                         });
                     }
@@ -1158,6 +1464,9 @@ if (!gl) {
         const e = estacionesJuego;
         e.activo = true;
         e.modo = config.modo;
+        // el mapa sale de la semilla: misma semilla = mismo mapa (en un servidor lo ven todos igual)
+        if (config.semilla && config.semilla !== semillaMundo) construirMundo(config.semilla);
+        px = SPAWN.x; pz = SPAWN.z; yaw = SPAWN.yaw; pitch = 0; saltoY = 0; velY = 0;
         e.reloj = config.reloj;
         e.desfaseMs = config.desfaseMs || 0;
         e.tiempoJugadoMs = config.tiempoJugadoMs || 0;
@@ -1255,7 +1564,6 @@ if (!gl) {
         regeneracionSalud: 0.15   // puntos por segundo cuando estás bien
     };
     const DIA_JUEGO_MS = 60 * 60 * 1000;
-    const CAMA = [-4.5, 0, -2.5, 2.5];   // misma cama de la casa: [x1, z1, x2, z2]
 
     const ENFERMEDADES = {
         resfrio: { nombre: "Resfrío", sev: 15, dias: 3 },
@@ -1373,10 +1681,18 @@ if (!gl) {
     // El daño sale de las lesiones (así lo que perdés de vida coincide con lo que te pasó en las piernas):
     // esguince 8, fractura 22 por pierna, y si la caída es todavía más alta se suma un extra.
     const DANO_PIERNA = { 0: 0, 1: 8, 2: 22 };
+    // Alturas en metros; un piso de la casa mide 3 m. v es la velocidad al tocar el suelo (gravedad 14).
+    const GRAVEDAD = 14;
+    const PISO_M = 3;
+    const CAIDA_ESGUINCE = 2 * PISO_M;        // 2 pisos: esguince
+    const CAIDA_FRACTURA = 2.5 * PISO_M;      // 2 pisos y medio: fractura
+    const CAIDA_DOBLE = 3 * PISO_M;           // 3 pisos: fractura en las dos piernas (y daño extra de ahí en más)
+    function alturaCaida(v) { return v * v / (2 * GRAVEDAD); }
     function tramoCaida(v) {
-        if (v < 8.5) return [1, 0];
-        if (v < 9.5) return [1, 1];
-        if (v < 11.5) return [2, Math.random() < 0.5 ? 1 : 0];
+        const h = alturaCaida(v);
+        if (h < CAIDA_ESGUINCE + 0.75) return [1, 0];
+        if (h < CAIDA_FRACTURA) return [1, 1];
+        if (h < CAIDA_DOBLE) return [2, Math.random() < 0.5 ? 1 : 0];
         return [2, 2];
     }
     function lesionPorCaida(tramo) {
@@ -1393,9 +1709,10 @@ if (!gl) {
 
     function aterrizar(v) {
         if (v > 4) ruidoPulso = Math.max(ruidoPulso, 6 + v * 1.4);
-        if (v <= 7.5 || !sv.activo || !sv.vivo) return;           // más de 2 metros de caída duele
+        if (alturaCaida(v) < CAIDA_ESGUINCE || !sv.activo || !sv.vivo) return;   // menos de 2 pisos no lastima
         const tramo = tramoCaida(v);
-        const dano = DANO_PIERNA[tramo[0]] + DANO_PIERNA[tramo[1]] + Math.max(0, v - 11.5) * 10;
+        const vDoble = Math.sqrt(2 * GRAVEDAD * CAIDA_DOBLE);
+        const dano = DANO_PIERNA[tramo[0]] + DANO_PIERNA[tramo[1]] + Math.max(0, v - vDoble) * 10;
         danar(dano, "Moriste por una caída.");
         lesionPorCaida(tramo);
     }
@@ -1656,7 +1973,7 @@ if (!gl) {
 
     document.getElementById("svReaparecer").addEventListener("click", function () {
         reiniciarSV();
-        px = 0; pz = 9; yaw = 0; pitch = 0;
+        px = SPAWN.x; pz = SPAWN.z; yaw = SPAWN.yaw; pitch = 0;
         pantallaMuerte.style.display = "none";
         cerrarPausaSiHay();
     });
@@ -1666,9 +1983,11 @@ if (!gl) {
 
     // ----- Dormir -----
     function cercaDeCama() {
-        const cx = clamp(px, CAMA[0], CAMA[2]);
-        const cz = clamp(pz, CAMA[1], CAMA[3]);
-        return Math.hypot(px - cx, pz - cz) <= 1.4;
+        return CAMAS.some(function (c) {
+            const cx = clamp(px, c[0], c[2]);
+            const cz = clamp(pz, c[1], c[3]);
+            return Math.hypot(px - cx, pz - cz) <= 1.4;
+        });
     }
 
     function empezarDormir() {
@@ -1828,24 +2147,7 @@ if (!gl) {
     const ORDEN_CONT = ["espalda", "piernas", "torso"];
     const BARRA_N = 7;
 
-    // Objetos sueltos que hay en el mapa: { id, x, y, z }
-    const MUNDO_INICIAL = [
-        { id: "mochila", x: 0, y: 0, z: -1 },
-        { id: "camisa", x: -1.8, y: 0, z: 3.2 },
-        { id: "pantalon", x: 1.8, y: 0, z: 3.2 },
-        { id: "gorra", x: 1.5, y: 0, z: -3.8 },
-        { id: "botas", x: 3, y: 0, z: -1.5 },
-        { id: "agua", x: -2.5, y: 0.8, z: -3.0 },
-        { id: "agua", x: -8.2, y: 1.2, z: 6.8 },
-        { id: "comida", x: 3, y: 1.0, z: 1.5 },
-        { id: "comida", x: -7.3, y: 0.7, z: 8.0 },
-        { id: "jarabe", x: -4.2, y: 0, z: -4.3 },
-        { id: "anabolico", x: 8.5, y: 0, z: 1 },
-        { id: "palo", x: 2.7, y: 0, z: 3.2 },
-        { id: "cuchillo", x: -0.9, y: 0, z: -1.0 },
-        { id: "hacha", x: 9.5, y: 0, z: 1 },
-        { id: "muletas", x: 1.5, y: 0, z: -2.8 }
-    ];
+    // Los objetos sueltos del mapa (MUNDO_INICIAL) los pone el generador de mapas según la semilla.
 
     const inv = {
         barra: new Array(BARRA_N).fill(null),
@@ -3006,15 +3308,21 @@ if (!gl) {
         };
     }
 
-    // Los objetos del mapa (cubitos de color que flotan un poco)
+    // Los objetos del mapa: tirados en el piso (o arriba de un mueble), quietos, cada uno con su giro y su forma
+    const FORMA_ITEM = {   // [ancho, alto, largo] (los largos son los que van acostados)
+        palo: [0.1, 0.1, 0.8], cuchillo: [0.07, 0.04, 0.4], hacha: [0.12, 0.08, 0.6], muletas: [0.12, 0.08, 0.9],
+        mochila: [0.4, 0.3, 0.3], camisa: [0.4, 0.08, 0.36], pantalon: [0.34, 0.08, 0.5], gorra: [0.28, 0.14, 0.3],
+        botas: [0.3, 0.16, 0.34], agua: [0.14, 0.3, 0.14], comida: [0.2, 0.14, 0.2], jarabe: [0.14, 0.22, 0.14], anabolico: [0.08, 0.06, 0.22]
+    };
     const bufferItems = gl.createBuffer();
     function dibujarItems(t) {
         if (!sv.activo || inv.mundo.length === 0) return;
         const lista = [];
         for (const it of inv.mundo) {
             if (Math.hypot(it.x - px, it.z - pz) > 40) continue;
-            const y = it.y + 0.08 + 0.04 * Math.sin(t * 2 + it.x);
-            cajaGirada(lista, it.x, it.z, t * 0.8, 0.34, y, y + 0.34, 0.34, 0, COLOR_ITEM[it.id]);
+            const f = FORMA_ITEM[it.id] || [0.3, 0.2, 0.3];
+            const giro = (Math.sin(it.x * 12.9898 + it.z * 78.233) * 43758.5453 % 1 + 1) % 1 * Math.PI * 2;   // un ángulo fijo por objeto
+            cajaGirada(lista, it.x, it.z, giro, f[0], it.y + 0.01, it.y + 0.01 + f[1], f[2], 0, COLOR_ITEM[it.id]);
         }
         if (lista.length === 0) return;
         configurarAtributos(bufferItems);
@@ -3634,7 +3942,7 @@ if (!gl) {
         }
         pidioSaltar = false;
         const yAntes = saltoY;
-        velY -= 14 * dt;
+        velY -= GRAVEDAD * dt;
         saltoY += velY * dt;
         const piso = alturaSuelo(px, pz, yAntes);
         if (saltoY <= piso) {

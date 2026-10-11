@@ -1003,6 +1003,18 @@ function dibujarFuego(dt, t) {
 
             // Arranca las estaciones de una partida guardada (las viejas empiezan en otoño, día 1)
             function empezarEstaciones(partida) {
+                // cada partida tiene su mapa (su semilla); las viejas reciben uno nuevo y sus objetos del mapa se reacomodan
+                if (!partida.semilla) {
+                    partida.semilla = Math.floor(Math.random() * 2147483646) + 1;
+                    if (partida.inventario) { delete partida.inventario.pos; delete partida.inventario.mundo; }
+                    const lista = leerPartidas();
+                    const guardada = lista.find(function (p) { return p.id === partida.id; });
+                    if (guardada) {
+                        guardada.semilla = partida.semilla;
+                        if (guardada.inventario) { delete guardada.inventario.pos; delete guardada.inventario.mundo; }
+                        guardarPartidas(lista);
+                    }
+                }
                 if (!partida.reloj) {
                     partida.reloj = Estaciones.crearReloj({ estacionInicial: "otono", inicioMs: 0 });
                     partida.tiempoJugadoMs = 0;
@@ -1018,6 +1030,7 @@ function dibujarFuego(dt, t) {
                     window.iniciarEstaciones({
                         modo: "offline",
                         reloj: partida.reloj,
+                        semilla: partida.semilla,
                         tiempoJugadoMs: partida.tiempoJugadoMs || 0,
                         supervivencia: partida.supervivencia || null,
                         inventario: partida.inventario || null
@@ -1122,7 +1135,8 @@ function dibujarFuego(dt, t) {
                 const partida = {
                     id: "p" + ahora, nombre: nombre, creada: ahora, ultima: ahora,
                     reloj: Estaciones.crearReloj({ estacionInicial: estacionInicial, inicioMs: 0 }),
-                    tiempoJugadoMs: 0
+                    tiempoJugadoMs: 0,
+                    semilla: Math.floor(Math.random() * 2147483646) + 1
                 };
                 lista.push(partida);
                 guardarPartidas(lista);

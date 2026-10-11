@@ -193,6 +193,7 @@ const servidor = http.createServer(function (req, res) {
                     nombre: nombre, host: host, tipo: tipo, max: max, ip: ip,
                     jugadores: {}, sockets: new Set(), creada: Date.now(), vacioDesde: Date.now(),
                     reloj: Estaciones.crearReloj({ estacionInicial: estacionInicial }),
+                    semilla: crypto.randomInt(1, 2147483647),   // de acá sale el mapa: todos los jugadores ven el mismo
                     pausada: false, pausadaDesde: null, pausadoPor: null
                 };
                 responder(res, 200, { id: id, token: salas[id].token });
@@ -250,7 +251,7 @@ wss.on("connection", function (socket, req) {
     sala.vacioDesde = null;
     sala.jugadores[id] = { x: 0, z: 9, yaw: 0, y: 0, c: id % 6, n: limpiar(params.get("nombre"), 20) || "Jugador" };
     socket.send(JSON.stringify({
-        tipo: "hola", id: id, reloj: sala.reloj, ahora: Date.now(),
+        tipo: "hola", id: id, reloj: sala.reloj, semilla: sala.semilla, ahora: Date.now(),
         pausada: sala.pausada, host: sala.host
     }));
 

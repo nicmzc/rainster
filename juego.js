@@ -646,30 +646,77 @@ if (!gl) {
     let pidioSaltar = false;
     let botonCorrerRef = null;
 
-    // Botones del celular: se pueden mover desde Configuración (A.botones guarda dónde quedó cada uno)
+    // ===== TAMAÑO DE LA INTERFAZ DE ABAJO (se adapta a cada pantalla) =====
+    // Una sola medida (--slot, en píxeles) manda sobre la barra de abajo (vida, cordura, sed, hambre,
+    // sueño y barra rápida), el inventario y los botones del celular. Sale del ALTO de la pantalla
+    // (así no se ve gigante en un celular acostado ni chiquito en una compu grande) y se achica
+    // si el ancho no alcanza. Si en un celular la barra y los botones no entran en la misma fila,
+    // los botones se apilan arriba de la barra en vez de taparla.
+    const esTactil = "ontouchstart" in window;
+    const UI = { u: 52, apilado: false };
+    const UI_PORC_ALTO = 0.074;   // una casilla mide ~7,4 % del alto de la pantalla
+    const UI_ANCHO_BARRA = 12.5;  // ancho de la barra de abajo, en casillas (medido con la barra real)
+    const UI_ALTO_BARRA = 2.5;    // alto de la barra de abajo, en casillas
+    const UI_LADOS = 5.4;         // lugar para el joystick y el botón de saltar a los costados, en casillas
+
+    // Zonas que tapan el notch o la barra de inicio del celular
+    const sondaSegura = document.createElement("div");
+    sondaSegura.style.cssText = "position:fixed;left:0;top:0;width:0;height:0;visibility:hidden;pointer-events:none;" +
+        "padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) env(safe-area-inset-bottom,0px) env(safe-area-inset-left,0px);";
+    document.body.appendChild(sondaSegura);
+    function margenSeguro() {
+        const c = getComputedStyle(sondaSegura);
+        return { der: parseFloat(c.paddingRight) || 0, aba: parseFloat(c.paddingBottom) || 0, izq: parseFloat(c.paddingLeft) || 0 };
+    }
+
+    function medirUI() {
+        const W = window.innerWidth, H = window.innerHeight;
+        let u = H * UI_PORC_ALTO;
+        if (esTactil) u = Math.min(u, W / (UI_ANCHO_BARRA + UI_LADOS));
+        const minimo = Math.min(esTactil ? 38 : 34, (W - 8) / UI_ANCHO_BARRA);   // legible, pero siempre entra a lo ancho
+        u = Math.max(minimo, Math.min(92, u));
+        UI.u = u;
+        UI.apilado = esTactil && W < u * (UI_ANCHO_BARRA + UI_LADOS);
+        const raiz = document.documentElement.style;
+        raiz.setProperty("--slot", u.toFixed(1) + "px");
+        raiz.setProperty("--s2", (u * 0.86).toFixed(1) + "px");
+    }
+    medirUI();
+
+    // Botones del celular: se pueden mover desde Configuración (A.botones guarda dónde quedó cada uno).
+    // Su tamaño y su lugar por defecto se miden en "casillas" (--slot), así crecen y se achican con la pantalla.
     const botonesUI = {};
     function aplicarBotones() {
-        const W = window.innerWidth, H = window.innerHeight;
+        const W = window.innerWidth, H = window.innerHeight, u = UI.u, seg = margenSeguro();
+        const subir = UI.apilado ? UI_ALTO_BARRA * u + 8 + u * 0.2 + seg.aba : 0;
         for (const id in botonesUI) {
             const b = botonesUI[id], el = b.el, c = A.botones && A.botones[id];
+            b.w = Math.round(b.k * u);
+            el.style.width = b.w + "px";
+            el.style.height = b.w + "px";
+            el.style.fontSize = Math.max(9, Math.round(b.w * 0.18)) + "px";
+            if (b.alAplicar) b.alAplicar(b.w);
             if (c && isFinite(c.fx) && isFinite(c.fy)) {
                 el.style.left = Math.max(0, Math.min(W - b.w, c.fx * W - b.w / 2)) + "px";
                 el.style.top = Math.max(0, Math.min(H - b.w, c.fy * H - b.w / 2)) + "px";
                 el.style.right = "auto";
                 el.style.bottom = "auto";
             } else {
-                el.style.left = b.der ? "auto" : b.mx + "px";
-                el.style.right = b.der ? b.mx + "px" : "auto";
-                el.style.bottom = b.my + "px";
+                const mx = Math.round(b.kx * u + (b.der ? seg.der : seg.izq));
+                el.style.left = b.der ? "auto" : mx + "px";
+                el.style.right = b.der ? mx + "px" : "auto";
+                el.style.bottom = Math.round(b.ky * u + subir + seg.aba * 0.5) + "px";
                 el.style.top = "auto";
             }
         }
     }
-    function registrarBoton(id, nombre, el, w, der, mx, my) {
-        botonesUI[id] = { el: el, nombre: nombre, w: w, der: der, mx: mx, my: my };
+    // k = tamaño, kx = margen lateral, ky = margen de abajo (todo en casillas)
+    function registrarBoton(id, nombre, el, k, der, kx, ky) {
+        botonesUI[id] = { el: el, nombre: nombre, k: k, w: Math.round(k * UI.u), der: der, kx: kx, ky: ky, alAplicar: null };
         aplicarBotones();
     }
-    window.addEventListener("resize", aplicarBotones);
+    window.addEventListener("resize", function () { medirUI(); aplicarBotones(); });
+    window.addEventListener("orientationchange", function () { setTimeout(function () { medirUI(); aplicarBotones(); }, 250); });
     window.Botones = {
         lista: function () {
             return Object.keys(botonesUI).map(function (id) {
@@ -701,7 +748,7 @@ if (!gl) {
 
     if ("ontouchstart" in window) {
         const botonSaltar = crearBoton("Saltar", "right:30px;");
-        registrarBoton("saltar", "Saltar", botonSaltar, 90, true, 30, 30);
+        registrarBoton("saltar", "Saltar", botonSaltar, 1.7, true, 0.45, 0.45);
 
         botonSaltar.addEventListener("touchstart", function (e) {
             e.preventDefault();
@@ -710,7 +757,7 @@ if (!gl) {
 
 
         // Joystick: cuanto más lo alejás del centro, más rápido vas (despacio = caminás, a fondo = corrés)
-        const JOY_R = 50;
+        let JOY_R = 50;      // cuánto se mueve la perilla (se ajusta al tamaño del joystick)
         const joyBase = document.createElement("div");
         joyBase.style.cssText =
             "position:fixed;z-index:900;left:30px;bottom:30px;width:120px;height:120px;border-radius:50%;" +
@@ -718,11 +765,20 @@ if (!gl) {
             "touch-action:none;user-select:none;-webkit-user-select:none;";
         const joyPerilla = document.createElement("div");
         joyPerilla.style.cssText =
-            "position:absolute;left:30px;top:30px;width:56px;height:56px;border-radius:50%;" +
+            "position:absolute;border-radius:50%;" +
             "background:rgba(255,255,255,0.75);pointer-events:none;";
         joyBase.appendChild(joyPerilla);
         document.body.appendChild(joyBase);
-        registrarBoton("joystick", "Joystick", joyBase, 120, false, 30, 30);
+        registrarBoton("joystick", "Joystick", joyBase, 2.2, false, 0.45, 0.45);
+        botonesUI.joystick.alAplicar = function (w) {
+            JOY_R = w * 0.416;
+            const p = Math.round(w * 0.467);
+            joyPerilla.style.width = p + "px";
+            joyPerilla.style.height = p + "px";
+            joyPerilla.style.left = Math.round((w - 4 - p) / 2) + "px";
+            joyPerilla.style.top = Math.round((w - 4 - p) / 2) + "px";
+        };
+        botonesUI.joystick.alAplicar(botonesUI.joystick.w);
         let joyDedo = null;
 
         function joyCentrar() {
@@ -1272,22 +1328,22 @@ if (!gl) {
     // ----- Interfaz -----
     const estiloSv = document.createElement("style");
     estiloSv.textContent = `
-:root{--slot:clamp(38px,6.2vw,58px);--s2:clamp(30px,5.2vw,50px);}
-#hudBajo{position:fixed;left:50%;bottom:8px;transform:translateX(-50%);z-index:800;display:none;
+:root{--slot:clamp(34px,7.4vh,92px);--s2:calc(var(--slot)*.86);}
+#hudBajo{position:fixed;left:50%;bottom:calc(8px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);z-index:800;display:none;
  align-items:flex-end;gap:calc(var(--slot)*.25);pointer-events:none;font-family:'Cinzel Decorative',serif;color:#fff;}
 #hudBajo .hbCorazon{position:relative;width:calc(var(--slot)*1.55);height:calc(var(--slot)*1.4);
  filter:drop-shadow(0 0 calc(10px*var(--v)) rgba(255,40,40,calc(.85*var(--v))));}
 #hudBajo .hbCorazon svg{width:100%;height:100%;display:block;}
 #hudBajo .hbNum{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
  font-size:calc(var(--slot)*.42);letter-spacing:1px;text-shadow:0 0 6px #000,0 0 10px #f00;padding-top:calc(var(--slot)*.06);}
-#hudBajo .hbMax{font-size:calc(var(--slot)*.2);opacity:.8;margin-top:-2px;}
+#hudBajo .hbMax{font-size:max(9px,calc(var(--slot)*.2));opacity:.8;margin-top:-2px;}
 #hudBajo .hbCentro{display:flex;flex-direction:column;align-items:flex-start;gap:calc(var(--slot)*.12);}
-#hudBajo .hbEstado{font-size:calc(var(--slot)*.2);letter-spacing:1px;color:#e8c9c9;text-shadow:0 0 6px #000;min-height:1.1em;}
+#hudBajo .hbEstado{font-size:max(10px,calc(var(--slot)*.22));letter-spacing:1px;color:#e8c9c9;text-shadow:0 0 6px #000;min-height:1.1em;}
 #hudBajo .hbPills{display:grid;grid-template-columns:1fr 1fr;gap:calc(var(--slot)*.1) calc(var(--slot)*.14);}
-#hudBajo .hbPill{position:relative;overflow:hidden;box-sizing:border-box;height:calc(var(--slot)*.42);min-width:calc(var(--slot)*2.2);
+#hudBajo .hbPill{position:relative;overflow:hidden;box-sizing:border-box;height:max(17px,calc(var(--slot)*.42));min-width:calc(var(--slot)*2.2);
  padding:0 calc(var(--slot)*.18);display:flex;align-items:center;justify-content:space-between;gap:.5em;
  border:2px solid rgba(255,215,220,calc(.3 + .55*var(--v)));border-radius:calc(var(--slot)*.22);background:rgba(28,0,0,.82);
- font-size:calc(var(--slot)*.24);letter-spacing:1px;text-shadow:0 0 2px #000;
+ font-size:max(10px,calc(var(--slot)*.24));letter-spacing:1px;text-shadow:0 0 2px #000;
  filter:brightness(calc(.35 + .65*var(--v)));}
 #hudBajo .hbRelleno{position:absolute;left:0;top:0;bottom:0;width:calc(var(--v)*100%);background:linear-gradient(90deg,rgba(0,0,0,0),var(--c));opacity:.65;}
 #hudBajo .hbTope{position:absolute;right:0;top:0;bottom:0;width:var(--tope,0%);background:repeating-linear-gradient(45deg,#000 0 3px,#2a2a2a 3px 6px);opacity:.9;}
@@ -1297,7 +1353,7 @@ if (!gl) {
 #hudBajo .hbSlot{position:relative;width:var(--slot);height:var(--slot);box-sizing:border-box;display:flex;align-items:center;justify-content:center;
  cursor:pointer;font-size:calc(var(--slot)*.55);border-left:2px solid rgba(255,215,220,.45);user-select:none;-webkit-user-select:none;}
 #hudBajo .hbSlot:first-child{border-left:none;}
-#hudBajo .hbSlot .hbN{position:absolute;left:3px;top:1px;font-size:calc(var(--slot)*.2);opacity:.5;}
+#hudBajo .hbSlot .hbN{position:absolute;left:3px;top:1px;font-size:max(8px,calc(var(--slot)*.2));opacity:.5;}
 #hudBajo .hbSlot.sel,.iSlot.sel{background:rgba(120,0,0,.55);box-shadow:inset 0 0 12px rgba(255,60,60,.8),0 0 10px rgba(255,40,40,.7);}
 #hudBajo .hbMas{margin-left:calc(var(--slot)*.18);width:var(--slot);height:var(--slot);box-sizing:border-box;border:2px solid rgba(255,215,220,.85);
  border-radius:calc(var(--slot)*.18);background:rgba(25,0,0,.72);display:flex;align-items:center;justify-content:center;
@@ -1305,7 +1361,7 @@ if (!gl) {
 #hudBajo .hbMano{position:relative;margin-left:calc(var(--slot)*.18);width:var(--slot);height:var(--slot);box-sizing:border-box;border:2px solid rgba(255,215,220,.85);
  border-radius:calc(var(--slot)*.18);background:rgba(25,0,0,.72);display:flex;align-items:center;justify-content:center;font-size:calc(var(--slot)*.55);
  cursor:pointer;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;}
-#hudBajo .hbMano .hbN{position:absolute;left:3px;top:1px;font-size:calc(var(--slot)*.2);opacity:.6;}
+#hudBajo .hbMano .hbN{position:absolute;left:3px;top:1px;font-size:max(8px,calc(var(--slot)*.2));opacity:.6;}
 #hudBajo .hbMano .hbVac{opacity:.3;}
 #hudBajo .hbMano.mano{background:rgba(150,80,0,.55);box-shadow:inset 0 0 12px rgba(255,170,60,.9),0 0 10px rgba(255,150,40,.7);}
 #hudBajo .hbMano.sel{background:rgba(120,0,0,.55);box-shadow:inset 0 0 12px rgba(255,60,60,.8),0 0 10px rgba(255,40,40,.7);}
@@ -1318,7 +1374,7 @@ if (!gl) {
 #svAcciones{position:fixed;left:50%;bottom:calc(var(--slot)*2.8 + 14px);transform:translateX(-50%);z-index:795;
  display:flex;flex-direction:column;align-items:center;gap:6px;pointer-events:none;}
 #svAcciones .svBtn{display:none;pointer-events:auto;padding:0.4rem 1.2rem;border:2px solid rgba(255,215,220,0.85);border-radius:18px;
- background:rgba(20,0,0,0.88);color:#fff;font-family:'Cinzel Decorative',serif;font-size:1rem;letter-spacing:2px;cursor:pointer;
+ background:rgba(20,0,0,0.88);color:#fff;font-family:'Cinzel Decorative',serif;font-size:clamp(12px,calc(var(--slot)*.3),22px);letter-spacing:2px;cursor:pointer;
  text-shadow:0 0 8px #f00;}
 #svMuerte{position:fixed;inset:0;z-index:1600;display:none;flex-direction:column;align-items:center;
  justify-content:center;gap:1.2rem;background:rgba(10,0,0,.88);color:#fff;text-align:center;font-family:'Cinzel Decorative',serif;}
@@ -1329,7 +1385,7 @@ if (!gl) {
 /* ===== INVENTARIO ===== */
 #invFondo{position:fixed;inset:0;z-index:850;display:none;pointer-events:none;}
 #invFondo.visible{display:block;}
-#invCaja{position:absolute;left:50%;transform:translateX(-50%);top:10px;bottom:calc(var(--slot) + 22px);width:min(94vw,780px);
+#invCaja{position:absolute;left:50%;transform:translateX(-50%);top:10px;bottom:calc(var(--slot) + 22px);width:min(94vw,calc(var(--s2)*15.6));
  box-sizing:border-box;pointer-events:auto;overflow:auto;display:grid;grid-template-columns:auto auto auto 1fr;grid-template-rows:1fr auto;
  gap:10px 18px;padding:12px 16px;border:2px solid rgba(255,215,220,.85);border-radius:22px;background:rgba(22,0,0,.95);
  box-shadow:0 0 30px rgba(255,0,0,.35);font-family:'Cinzel Decorative',serif;color:#fff;}
@@ -1338,21 +1394,21 @@ if (!gl) {
 #invCaja .invVista canvas{position:absolute;left:0;top:0;width:100%;height:100%;display:block;touch-action:none;cursor:grab;
  user-select:none;-webkit-user-select:none;}
 #invCaja .invVista canvas:active{cursor:grabbing;}
-#invCaja .invPie .invLes{flex-basis:100%;font-size:calc(var(--s2)*.26);line-height:1.4;color:#ffb3b3;text-shadow:0 0 4px #000;}
+#invCaja .invPie .invLes{flex-basis:100%;font-size:max(10px,calc(var(--s2)*.26));line-height:1.4;color:#ffb3b3;text-shadow:0 0 4px #000;}
 #hudBajo .hbSlot.mano{background:rgba(150,80,0,.55);box-shadow:inset 0 0 12px rgba(255,170,60,.9),0 0 10px rgba(255,150,40,.7);}
-#invCaja .invTit{font-size:calc(var(--s2)*.3);letter-spacing:2px;color:#e8c9c9;text-shadow:0 0 8px #f00;margin-bottom:5px;}
+#invCaja .invTit{font-size:max(11px,calc(var(--s2)*.3));letter-spacing:2px;color:#e8c9c9;text-shadow:0 0 8px #f00;margin-bottom:5px;}
 #invCaja .invCol{display:flex;flex-direction:column;align-items:center;gap:5px;}
 #invCaja .invGrid{display:grid;grid-template-columns:repeat(var(--cols),var(--s2));gap:4px;}
 #invCaja .invConts{display:flex;flex-wrap:wrap;gap:12px 22px;align-content:flex-start;}
-#invCaja .invVacio{color:#b9908f;font-size:calc(var(--s2)*.3);letter-spacing:1px;line-height:1.5;max-width:260px;}
+#invCaja .invVacio{color:#b9908f;font-size:max(11px,calc(var(--s2)*.3));letter-spacing:1px;line-height:1.5;max-width:260px;}
 #invCaja .iSlot{position:relative;box-sizing:border-box;width:var(--s2);height:var(--s2);border:2px solid rgba(230,140,50,.8);border-radius:8px;
  background:rgba(60,20,0,.35);display:flex;align-items:center;justify-content:center;font-size:calc(var(--s2)*.58);cursor:pointer;
  user-select:none;-webkit-user-select:none;}
 #invCaja .iSlot.eq{border-color:rgba(255,215,220,.85);background:rgba(60,0,0,.45);}
 #invCaja .iSlot.alta{height:calc(var(--s2)*2.4);width:calc(var(--s2)*1.3);}
-#invCaja .iSlot .iEt{position:absolute;font-size:calc(var(--s2)*.2);opacity:.55;text-align:center;line-height:1.1;pointer-events:none;}
+#invCaja .iSlot .iEt{position:absolute;font-size:max(8px,calc(var(--s2)*.2));opacity:.55;text-align:center;line-height:1.1;pointer-events:none;}
 #invCaja .invPie{grid-column:1/-1;display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;min-height:calc(var(--s2)*.8);border-top:2px solid rgba(255,215,220,.4);padding-top:8px;
- font-size:calc(var(--s2)*.3);letter-spacing:1px;color:#d9b8b8;}
+ font-size:max(11px,calc(var(--s2)*.3));letter-spacing:1px;color:#d9b8b8;}
 #invCaja .invPie b{color:#fff;font-weight:normal;text-shadow:0 0 8px #f00;}
 #invCaja .invPie button{font-family:inherit;font-size:inherit;letter-spacing:2px;color:#fff;background:rgba(60,0,0,.6);
  border:2px solid rgba(255,215,220,.7);border-radius:14px;padding:.15rem .9rem;cursor:pointer;text-shadow:0 0 8px #f00;}
@@ -2786,7 +2842,7 @@ if (!gl) {
     // Botones del celular
     let botonesTactiles = null;
     if ("ontouchstart" in window) {
-        const mini = "width:62px;height:62px;font-size:13px;";
+        const mini = "";
         const hacer = function (texto, estilo, accion) {
             const b = crearBoton(texto, mini + estilo);
             b.addEventListener("touchstart", function (e) { e.preventDefault(); accion(); }, { passive: false });
@@ -2794,12 +2850,12 @@ if (!gl) {
         };
         const nuevo = function (id, texto, der, mx, my, accion) {
             const b = hacer(texto, "", accion);
-            registrarBoton(id, texto, b, 62, der, mx, my);
+            registrarBoton(id, texto, b, 1.4, der, mx, my);
             return b;
         };
         botonesTactiles = {
-            agachar: nuevo("agachar", "Agachar", true, 86, 135, alternarAgachar),
-            arrastrar: nuevo("arrastrar", "Arrastrar", true, 10, 135, alternarArrastrar)
+            agachar: nuevo("agachar", "Agachar", true, 1.9, 2.75, alternarAgachar),
+            arrastrar: nuevo("arrastrar", "Arrastrar", true, 0.3, 2.75, alternarArrastrar)
         };
     }
     function actualizarBotonesTactiles() {

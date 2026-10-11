@@ -254,7 +254,9 @@ html {
             inset: 0;
             z-index: 5;
             display: none;
-            align-items: center;
+            align-items: flex-start;
+            padding-top: 4vh;
+            box-sizing: border-box;
             justify-content: center;
             background: rgba(0, 0, 0, 0.75);
         }
@@ -359,7 +361,9 @@ html {
     inset: 0;
     z-index: 5;
     display: none;
-    align-items: center;
+    align-items: flex-start;
+    padding-top: 4vh;
+    box-sizing: border-box;
     justify-content: center;
     background: rgba(0, 0, 0, 0.75);
 }
@@ -412,6 +416,20 @@ html {
     transition: opacity 0.3s;
 }
 .aviso.visible { opacity: 1; }
+
+/* ===== PAUSA DEL ANFITRIÓN (la ven los demás jugadores) ===== */
+#pausaRemota {
+    position: fixed;
+    inset: 0;
+    z-index: 850;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(3px);
+}
+#pausaRemota.visible { display: flex; }
+#pausaRemotaTexto { text-align: center; font-size: clamp(1rem, 2.6vw, 1.5rem); }
 
 /* ===== PAUSA ===== */
 #pausa {
@@ -634,6 +652,25 @@ html {
                     </div>
                 </div>
 
+                <button class="seccion" data-sec="secPersonaje">Personaje <span class="mas">+</span></button>
+                <div class="seccionCuerpo" id="secPersonaje" hidden>
+                    <div class="fila">
+                        <span class="filaEtiqueta">Color</span>
+                        <span id="ajColorMuestra" style="width:2.2rem;height:2.2rem;border-radius:50%;border:2px solid #fff;display:inline-block;"></span>
+                    </div>
+                    <div class="fila" style="justify-content:center;">
+                        <canvas id="ajRueda" width="180" height="180" style="width:180px;height:180px;touch-action:none;cursor:crosshair;border-radius:50%;"></canvas>
+                    </div>
+                    <div class="fila">
+                        <span class="filaEtiqueta">Brillo</span>
+                        <input class="deslizador" id="ajBrillo" type="range" min="0.15" max="1" step="0.01">
+                    </div>
+                    <div class="fila" id="ajPresets" style="flex-wrap:wrap;justify-content:center;gap:0.6rem;"></div>
+                    <div class="fila">
+                        <button class="enlace" id="ajColorAuto">Color automático</button>
+                    </div>
+                </div>
+
                 <button class="seccion" data-sec="secControles">Controles <span class="mas">+</span></button>
                 <div class="seccionCuerpo" id="secControles" hidden>
                     <div id="ajTeclas"></div>
@@ -662,6 +699,13 @@ html {
             <button class="boton pausaBoton" id="pausaConfig">Configuración</button>
             <button class="boton pausaBoton" id="pausaCerrarServidor" hidden>Cerrar servidor</button>
             <button class="boton pausaBoton" id="pausaSalir">Salir al menú</button>
+        </div>
+    </div>
+
+<div id="pausaRemota">
+        <div class="pausaCaja">
+            <h2 class="pausaTitulo">Pausa</h2>
+            <div class="partidaInfo" id="pausaRemotaTexto"></div>
         </div>
     </div>
 
@@ -974,7 +1018,9 @@ function dibujarFuego(dt, t) {
                     window.iniciarEstaciones({
                         modo: "offline",
                         reloj: partida.reloj,
-                        tiempoJugadoMs: partida.tiempoJugadoMs || 0
+                        tiempoJugadoMs: partida.tiempoJugadoMs || 0,
+                        supervivencia: partida.supervivencia || null,
+                        inventario: partida.inventario || null
                     });
                 }
             }
@@ -1421,6 +1467,33 @@ document.getElementById("btnSalir").addEventListener("click", function () {
             let tPausa = 0;
             let atrasPuesto = false;
 
+            // Pausa del anfitrión: el juego queda quieto si pausó él o si pausaste vos
+            let pausadoRemoto = false;
+            const cajaPausaRemota = document.getElementById("pausaRemota");
+
+            function actualizarPausaJuego() {
+                window.juegoPausado = pausado || pausadoRemoto;
+            }
+
+            // Lo llama juego.js cuando el servidor avisa que el anfitrión pausó o reanudó
+            window.alPausaRemota = function (pausar, host) {
+                pausadoRemoto = !!pausar;
+                if (pausadoRemoto) {
+                    document.getElementById("pausaRemotaTexto").textContent =
+                        "El anfitrión" + (host ? " (" + host + ")" : "") + " pausó la partida";
+                    if (window.soltarControles) window.soltarControles();
+                }
+                cajaPausaRemota.classList.toggle("visible", pausadoRemoto);
+                actualizarPausaJuego();
+            };
+
+            // Solo el anfitrión (quien creó el servidor) le avisa al servidor
+            function enviarPausaAlServidor(pausar) {
+                if (!servidorActual || !window.enviarPausa) return;
+                const token = leerTokens()[servidorActual];
+                if (token) window.enviarPausa(pausar, token);
+            }
+
             function ponerEstadoAtras() {
                 try { history.pushState({ rainster: 1 }, "", location.href); } catch (e) {}
             }
@@ -1433,7 +1506,8 @@ document.getElementById("btnSalir").addEventListener("click", function () {
                 if (!enJuego || pausado) return;
                 pausado = true;
                 tPausa = performance.now();
-                window.juegoPausado = true;
+                actualizarPausaJuego();
+                enviarPausaAlServidor(true);
                 guardarTiempoJugado();
                 if (window.soltarControles) window.soltarControles();
                 try { document.exitPointerLock(); } catch (e) {}
@@ -1446,7 +1520,8 @@ document.getElementById("btnSalir").addEventListener("click", function () {
                 if (!pausado) return;
                 pausado = false;
                 tPausa = performance.now();
-                window.juegoPausado = false;
+                actualizarPausaJuego();
+                enviarPausaAlServidor(false);
                 pausa.classList.remove("visible");
                 btnConfigJuego.style.display = "block";
                 if (!("ontouchstart" in window)) {
@@ -1509,6 +1584,7 @@ document.getElementById("btnSalir").addEventListener("click", function () {
             window.addEventListener("popstate", function () {
                 if (!enJuego) return;
                 ponerEstadoAtras();
+                if (window.inventarioAbierto) { window.cerrarInventario(); return; }
                 if (!pausado) abrirPausa();
                 else if (configAbiertaEnJuego()) volverAPausa();
                 else cerrarPausa();
@@ -1516,11 +1592,12 @@ document.getElementById("btnSalir").addEventListener("click", function () {
 
             // Escape en la compu (si el mouse estaba capturado, el navegador lo suelta y se abre la pausa)
             document.addEventListener("pointerlockchange", function () {
-                if (enJuego && !pausado && !document.pointerLockElement) abrirPausa();
+                if (enJuego && !pausado && !document.pointerLockElement && !window.inventarioAbierto) abrirPausa();
             });
             window.addEventListener("keydown", function (e) {
                 if (e.key !== "Escape" || !enJuego) return;
                 if (performance.now() - tPausa < 300) return;
+                if (window.inventarioAbierto) { window.cerrarInventario(); return; }
                 if (!pausado) abrirPausa();
                 else if (configAbiertaEnJuego()) volverAPausa();
                 else cerrarPausa();
@@ -1533,6 +1610,8 @@ document.getElementById("btnSalir").addEventListener("click", function () {
                 const partida = lista.find(function (p) { return p.id === partidaActual; });
                 if (!partida) return;
                 partida.tiempoJugadoMs = window.tiempoJugadoEstaciones();
+                if (window.Supervivencia) partida.supervivencia = window.Supervivencia.exportar();
+                if (window.Inventario) partida.inventario = window.Inventario.exportar();
                 guardarPartidas(lista);
             }
             setInterval(guardarTiempoJugado, 5000);
@@ -1667,7 +1746,13 @@ document.getElementById("btnSalir").addEventListener("click", function () {
                 ["izquierda", "Izquierda"],
                 ["derecha", "Derecha"],
                 ["saltar", "Saltar"],
-                ["correr", "Correr"]
+                ["correr", "Correr"],
+                ["agachar", "Agacharse"],
+                ["arrastrar", "Arrastrarse"],
+                ["pelea", "Pegar"],
+                ["interactuar", "Recoger / dormir"],
+                ["inventario", "Inventario"],
+                ["tirar", "Tirar objeto en la mano"]
             ];
             const NOMBRES = {
                 Space: "Espacio", ShiftLeft: "Shift izq.", ShiftRight: "Shift der.",
@@ -1691,8 +1776,20 @@ document.getElementById("btnSalir").addEventListener("click", function () {
                     const p = document.createElement("p");
                     p.className = "vacio";
                     p.style.margin = "0.4rem 0";
-                    p.textContent = "Izquierda: mover · Derecha: mirar";
+                    p.textContent = "Joystick: mover · Pantalla: mirar · Mantené apretado un objeto para tirarlo";
                     cajaTeclas.appendChild(p);
+                    const fila = document.createElement("div");
+                    fila.className = "fila";
+                    const et = document.createElement("span");
+                    et.className = "filaEtiqueta";
+                    et.textContent = "Botones";
+                    const b = document.createElement("button");
+                    b.className = "tecla";
+                    b.textContent = "Mover botones";
+                    b.addEventListener("click", abrirEditorBotones);
+                    fila.appendChild(et);
+                    fila.appendChild(b);
+                    cajaTeclas.appendChild(fila);
                     return;
                 }
                 ACCIONES.forEach(function (par) {
@@ -1733,11 +1830,159 @@ document.getElementById("btnSalir").addEventListener("click", function () {
                 document.addEventListener("keydown", alPresionar, true);
             }
 
+            // Editor de botones del celular: se arrastran y quedan guardados
+            function abrirEditorBotones() {
+                if (!window.Botones) return;
+                const W = window.innerWidth, H = window.innerHeight;
+                const fondo = document.createElement("div");
+                fondo.style.cssText = "position:fixed;inset:0;z-index:5000;background:rgba(0,0,0,0.9);touch-action:none;" +
+                    "font-family:'Cinzel Decorative',serif;color:#fff;";
+                const barra = document.createElement("div");
+                barra.style.cssText = "position:absolute;top:8px;left:0;right:0;text-align:center;pointer-events:none;";
+                barra.innerHTML = '<div style="font-size:0.95rem;letter-spacing:2px;margin-bottom:6px;">Arrastrá cada botón donde quieras</div>';
+                const fila = document.createElement("div");
+                fila.style.cssText = "pointer-events:auto;display:inline-flex;gap:10px;";
+                function boton(txt, fn) {
+                    const b = document.createElement("button");
+                    b.className = "tecla";
+                    b.style.minWidth = "0";
+                    b.textContent = txt;
+                    b.addEventListener("click", fn);
+                    fila.appendChild(b);
+                }
+                const fantasmas = [];
+                window.Botones.lista().forEach(function (b) {
+                    const g = document.createElement("div");
+                    g.textContent = b.nombre;
+                    g.style.cssText = "position:absolute;width:" + b.w + "px;height:" + b.w + "px;border-radius:50%;" +
+                        "left:" + (b.cx - b.w / 2) + "px;top:" + (b.cy - b.w / 2) + "px;background:rgba(255,255,255,0.3);" +
+                        "border:2px dashed #fff;display:flex;align-items:center;justify-content:center;font-family:sans-serif;" +
+                        "font-size:13px;text-align:center;user-select:none;-webkit-user-select:none;touch-action:none;";
+                    let dx = 0, dy = 0;
+                    g.addEventListener("pointerdown", function (e) {
+                        g.setPointerCapture(e.pointerId);
+                        dx = e.clientX - parseFloat(g.style.left);
+                        dy = e.clientY - parseFloat(g.style.top);
+                        g.dataset.mueve = "1";
+                        g.style.background = "rgba(255,140,0,0.6)";
+                    });
+                    g.addEventListener("pointermove", function (e) {
+                        if (!g.dataset.mueve) return;
+                        g.style.left = Math.max(0, Math.min(W - b.w, e.clientX - dx)) + "px";
+                        g.style.top = Math.max(0, Math.min(H - b.w, e.clientY - dy)) + "px";
+                    });
+                    const suelta = function () { g.dataset.mueve = ""; g.style.background = "rgba(255,255,255,0.3)"; };
+                    g.addEventListener("pointerup", suelta);
+                    g.addEventListener("pointercancel", suelta);
+                    fondo.appendChild(g);
+                    fantasmas.push({ id: b.id, w: b.w, el: g });
+                });
+                boton("Guardar", function () {
+                    fantasmas.forEach(function (f) {
+                        window.Botones.poner(f.id, (parseFloat(f.el.style.left) + f.w / 2) / W, (parseFloat(f.el.style.top) + f.w / 2) / H);
+                    });
+                    guardar();
+                    window.Botones.aplicar();
+                    fondo.remove();
+                });
+                boton("Restablecer", function () {
+                    window.Botones.restablecer();
+                    guardar();
+                    fondo.remove();
+                    abrirEditorBotones();
+                });
+                boton("Cancelar", function () { fondo.remove(); });
+                barra.appendChild(fila);
+                fondo.appendChild(barra);
+                document.body.appendChild(fondo);
+            }
+
             $("ajRestablecer").addEventListener("click", function () {
                 window.Ajustes.restablecerControles();
                 pintarInvertir();
                 dibujarTeclas();
             });
+
+            // ----- Personaje: color con rueda o colores predeterminados -----
+            (function () {
+                const A = window.Ajustes.datos;
+                const PRESETS = ["#ff8c00", "#4d99ff", "#66e666", "#f266b3", "#f2e64d", "#9966f2"];   // los colores que ya existían
+                const rueda = $("ajRueda"), cx = rueda.getContext("2d");
+                const brillo = $("ajBrillo"), muestra = $("ajColorMuestra");
+                const R = 90;
+                let est = { h: 0.08, s: 0.9, v: 1 };
+
+                function hsvARgb(h, s, v) {
+                    const i = Math.floor(h * 6), f = h * 6 - i, p = v * (1 - s), q = v * (1 - f * s), t = v * (1 - (1 - f) * s);
+                    const m = [[v, t, p], [q, v, p], [p, v, t], [p, q, v], [t, p, v], [v, p, q]][i % 6];
+                    return m.map(function (c) { return Math.round(c * 255); });
+                }
+                function rgbAHsv(r, g, b) {
+                    const mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn;
+                    let h = 0;
+                    if (d > 0) {
+                        if (mx === r) h = ((g - b) / d) % 6; else if (mx === g) h = (b - r) / d + 2; else h = (r - g) / d + 4;
+                        h /= 6; if (h < 0) h += 1;
+                    }
+                    return { h: h, s: mx === 0 ? 0 : d / mx, v: mx };
+                }
+                function aHex(rgb) { return "#" + rgb.map(function (c) { return (c < 16 ? "0" : "") + c.toString(16); }).join(""); }
+
+                function pintarRueda() {
+                    const img = cx.createImageData(180, 180);
+                    for (let y = 0; y < 180; y++) {
+                        for (let x = 0; x < 180; x++) {
+                            const dx = x - R, dy = y - R, d = Math.hypot(dx, dy), k = (y * 180 + x) * 4;
+                            if (d > R) continue;
+                            const h = (Math.atan2(dy, dx) / (Math.PI * 2) + 1) % 1;
+                            const c = hsvARgb(h, Math.min(1, d / R), est.v);
+                            img.data[k] = c[0]; img.data[k + 1] = c[1]; img.data[k + 2] = c[2]; img.data[k + 3] = 255;
+                        }
+                    }
+                    cx.putImageData(img, 0, 0);
+                    if (A.colorPersonaje) {                                  // marca donde está el color elegido
+                        const a = est.h * Math.PI * 2, r = est.s * R;
+                        cx.beginPath();
+                        cx.arc(R + Math.cos(a) * r, R + Math.sin(a) * r, 7, 0, Math.PI * 2);
+                        cx.lineWidth = 2; cx.strokeStyle = "#fff"; cx.stroke();
+                        cx.lineWidth = 1; cx.strokeStyle = "#000"; cx.stroke();
+                    }
+                }
+                function aplicar(guardarYa) {
+                    if (guardarYa) { A.colorPersonaje = aHex(hsvARgb(est.h, est.s, est.v)); guardar(); }
+                    muestra.style.background = A.colorPersonaje || "linear-gradient(135deg,#ff8c00,#4d99ff,#66e666,#f266b3)";
+                    brillo.value = est.v;
+                    pintarRueda();
+                }
+                function desdeHex(hex) {
+                    const n = parseInt(hex.slice(1), 16);
+                    est = rgbAHsv(((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255);
+                }
+                function elegir(e) {
+                    const r = rueda.getBoundingClientRect();
+                    const x = (e.clientX - r.left) / r.width * 180 - R, y = (e.clientY - r.top) / r.height * 180 - R;
+                    est.h = (Math.atan2(y, x) / (Math.PI * 2) + 1) % 1;
+                    est.s = Math.min(1, Math.hypot(x, y) / R);
+                    aplicar(true);
+                }
+                let arrastra = false;
+                rueda.addEventListener("pointerdown", function (e) { arrastra = true; try { rueda.setPointerCapture(e.pointerId); } catch (x) {} elegir(e); });
+                rueda.addEventListener("pointermove", function (e) { if (arrastra) elegir(e); });
+                rueda.addEventListener("pointerup", function () { arrastra = false; });
+                rueda.addEventListener("pointercancel", function () { arrastra = false; });
+                brillo.addEventListener("input", function () { est.v = parseFloat(brillo.value); aplicar(true); });
+
+                PRESETS.forEach(function (hex) {
+                    const b = document.createElement("button");
+                    b.style.cssText = "width:2.4rem;height:2.4rem;border-radius:50%;border:2px solid #fff;cursor:pointer;background:" + hex + ";";
+                    b.addEventListener("click", function () { desdeHex(hex); A.colorPersonaje = hex; guardar(); aplicar(false); });
+                    $("ajPresets").appendChild(b);
+                });
+                $("ajColorAuto").addEventListener("click", function () { A.colorPersonaje = ""; est = { h: 0.08, s: 0.9, v: 1 }; guardar(); aplicar(false); });
+
+                if (/^#[0-9a-f]{6}$/i.test(A.colorPersonaje || "")) desdeHex(A.colorPersonaje);
+                aplicar(false);
+            })();
 
             dibujarTeclas();
         })();

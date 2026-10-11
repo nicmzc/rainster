@@ -20,6 +20,14 @@ const tipos = {
     ".json": "application/json"
 };
 
+// Daño y alcance de cada golpe (el servidor decide; el alcance es el del juego + un margen por la demora de la red)
+const ARMAS = {
+    puno: { dano: 5, alcance: 2.4, espera: 300 },
+    palo: { dano: 12, alcance: 3.0, espera: 450 },
+    cuchillo: { dano: 20, alcance: 2.6, espera: 320 },
+    hacha: { dano: 30, alcance: 2.9, espera: 800 }
+};
+
 // ===== SERVIDORES (SALAS) =====
 const salas = {};
 let siguienteSala = 1;
@@ -60,6 +68,41 @@ function responder(res, codigo, datos) {
         "Cache-Control": "no-store"
     });
     res.end(JSON.stringify(datos));
+}
+
+// ===== PAUSA DEL ANFITRIÓN =====
+// Le manda un mensaje a todos los que están en la sala
+function enviarASala(sala, mensaje) {
+    const texto = JSON.stringify(mensaje);
+    for (const cliente of sala.sockets) {
+        if (cliente.readyState === WebSocket.OPEN) {
+            try { cliente.send(texto); } catch (e) {}
+        }
+    }
+}
+
+// Reanuda la partida para todos. El reloj de las estaciones no avanza mientras está en pausa.
+function reanudarSala(sala) {
+    if (!sala.pausada) return;
+    sala.pausada = false;
+    sala.reloj.inicioMs += Date.now() - sala.pausadaDesde;
+    sala.pausadaDesde = null;
+    sala.pausadoPor = null;
+    enviarASala(sala, { tipo: "pausa", pausado: false, reloj: sala.reloj, ahora: Date.now() });
+}
+
+// Solo el dueño del servidor (el que tiene el token) puede pausar o reanudar
+function cambiarPausa(sala, socket, datos) {
+    if (!datos.token || datos.token !== sala.token) return;
+    if (datos.pausado === true) {
+        sala.pausadoPor = socket;
+        if (sala.pausada) return;
+        sala.pausada = true;
+        sala.pausadaDesde = Date.now();
+        enviarASala(sala, { tipo: "pausa", pausado: true, host: sala.host });
+    } else {
+        reanudarSala(sala);
+    }
 }
 
 // Muestra la página del juego y la lista de servidores
@@ -149,7 +192,8 @@ const servidor = http.createServer(function (req, res) {
                     id: id, token: crypto.randomBytes(16).toString("hex"),
                     nombre: nombre, host: host, tipo: tipo, max: max, ip: ip,
                     jugadores: {}, sockets: new Set(), creada: Date.now(), vacioDesde: Date.now(),
-                    reloj: Estaciones.crearReloj({ estacionInicial: estacionInicial })
+                    reloj: Estaciones.crearReloj({ estacionInicial: estacionInicial }),
+                    pausada: false, pausadaDesde: null, pausadoPor: null
                 };
                 responder(res, 200, { id: id, token: salas[id].token });
             });
@@ -200,14 +244,41 @@ wss.on("connection", function (socket, req) {
     if (sala.sockets.size >= sala.max) return rechazar("El servidor está lleno");
 
     const id = siguienteId++;
+    socket.jugadorId = id;
+    let ultimoGolpe = 0;
     sala.sockets.add(socket);
     sala.vacioDesde = null;
     sala.jugadores[id] = { x: 0, z: 9, yaw: 0, y: 0, c: id % 6, n: limpiar(params.get("nombre"), 20) || "Jugador" };
-    socket.send(JSON.stringify({ tipo: "hola", id: id, reloj: sala.reloj, ahora: Date.now() }));
+    socket.send(JSON.stringify({
+        tipo: "hola", id: id, reloj: sala.reloj, ahora: Date.now(),
+        pausada: sala.pausada, host: sala.host
+    }));
 
     socket.on("message", function (mensaje) {
         try {
             const datos = JSON.parse(mensaje);
+            if (datos.tipo === "pausa") {
+                cambiarPausa(sala, socket, datos);
+                return;
+            }
+            if (datos.tipo === "golpe") {
+                const yo = sala.jugadores[id];
+                const blancoId = Number(datos.a);
+                const blanco = sala.jugadores[blancoId];
+                const arma = ARMAS[datos.arma];
+                const ahora = Date.now();
+                if (sala.pausada || !yo || !blanco || !arma || blancoId === id) return;
+                if (ahora - ultimoGolpe < arma.espera * 0.8) return;
+                if (Math.hypot(yo.x - blanco.x, yo.z - blanco.z) > arma.alcance) return;
+                ultimoGolpe = ahora;
+                const fuerza = Math.max(0.3, Math.min(1, Number(datos.f) || 1));
+                for (const otro of sala.sockets) {
+                    if (otro.jugadorId === blancoId && otro.readyState === WebSocket.OPEN) {
+                        otro.send(JSON.stringify({ tipo: "golpe", de: id, nombre: yo.n, dano: arma.dano * fuerza }));
+                    }
+                }
+                return;
+            }
             if (sala.jugadores[id] &&
                 typeof datos.x === "number" &&
                 typeof datos.z === "number" &&
@@ -217,7 +288,13 @@ wss.on("connection", function (socket, req) {
                     z: datos.z,
                     yaw: datos.yaw,
                     y: typeof datos.y === "number" ? datos.y : 0,
+                    p: datos.p === 1 || datos.p === 2 ? datos.p : 0,
+                    m: typeof datos.m === "string" && /^[a-z]{1,12}$/.test(datos.m) ? datos.m : "",
+                    pe: datos.pe ? 1 : 0,
+                    r: typeof datos.r === "number" ? Math.max(0, Math.min(60, datos.r)) : 0,
+                    g: typeof datos.g === "number" ? Math.floor(datos.g) % 100000 : 0,
                     c: sala.jugadores[id].c,
+                    col: typeof datos.col === "string" && /^#[0-9a-fA-F]{6}$/.test(datos.col) ? datos.col : "",
                     n: sala.jugadores[id].n
                 };
             }
@@ -226,6 +303,7 @@ wss.on("connection", function (socket, req) {
 
     socket.on("close", function () {
         sala.sockets.delete(socket);
+        if (sala.pausada && sala.pausadoPor === socket) reanudarSala(sala);
         delete sala.jugadores[id];
         if (sala.sockets.size === 0) sala.vacioDesde = Date.now();
     });

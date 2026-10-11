@@ -147,6 +147,7 @@
     const descripcion = document.createElement('div');
     descripcion.className = 'partidaInfo';
     descripcion.style.marginTop = '0.8rem';
+    descripcion.style.minHeight = '3.6em';
 
     const info = document.createElement('div');
     info.className = 'partidaInfo';

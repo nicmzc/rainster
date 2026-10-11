@@ -597,11 +597,12 @@ if (!gl) {
     };
 
     // ----- Rueda de estaciones + mapa (arriba a la izquierda) -----
+    // La estación actual brilla y una flechita marca en qué día de la estación estás.
     const COLORES_RUEDA = {
-        otono: "#a97a4c",
-        invierno: "#5f9a9c",
-        primavera: "#6a9863",
-        verano: "#a8985a"
+        otono:     { apagado: "#7d5c3d", brillo: "#e0a057" },
+        invierno:  { apagado: "#4a7476", brillo: "#72c9cc" },
+        primavera: { apagado: "#4f734b", brillo: "#80c776" },
+        verano:    { apagado: "#7d7343", brillo: "#dcc864" }
     };
     const CUADRANTES = [
         { id: "otono", ini: -90, fin: 0, arriba: true },
@@ -609,21 +610,30 @@ if (!gl) {
         { id: "primavera", ini: 90, fin: 180, arriba: false },
         { id: "verano", ini: 180, fin: 270, arriba: true }
     ];
+    const R_RUEDA = 84;
 
     const estiloHud = document.createElement("style");
     estiloHud.textContent =
         "#hudTiempo{position:fixed;top:16px;left:16px;z-index:800;display:none;" +
-        "align-items:flex-start;gap:14px;pointer-events:none;--tam:160px;}" +
+        "align-items:flex-start;gap:14px;pointer-events:none;--tam:160px;--mapa:140px;--tmapa:20px;}" +
         "#hudTiempo .rueda{width:var(--tam);height:var(--tam);display:block;" +
         "filter:drop-shadow(0 0 9px rgba(0,0,0,0.9));}" +
-        "#hudTiempo .mapaTitulo{height:20px;line-height:20px;text-align:center;" +
+        "#hudTiempo .rLabel{font-size:12px;letter-spacing:1px;}" +
+        "#hudTiempo .rCentro{font-size:15px;}" +
+        "#hudTiempo .rNombre{font-size:12px;}" +
+        "#hudTiempo .mapaTitulo{height:var(--tmapa);line-height:var(--tmapa);text-align:center;" +
         "font-family:'Cinzel Decorative',serif;font-size:0.95rem;letter-spacing:2px;" +
         "color:#d6d6d6;text-shadow:0 0 6px #000;}" +
-        "#hudTiempo .mapaCaja{display:block;width:calc(var(--tam) - 20px);" +
-        "height:calc(var(--tam) - 20px);box-sizing:border-box;border:3px solid #7c7c7c;" +
-        "border-radius:8px;background:#3a3a3a;box-shadow:0 0 10px rgba(0,0,0,0.85);}" +
-        "@media (max-width:600px){#hudTiempo{--tam:112px;top:10px;left:10px;gap:8px;}" +
-        "#hudTiempo .mapaTitulo{font-size:0.7rem;height:16px;line-height:16px;}}";
+        "#hudTiempo .mapaCaja{display:block;width:var(--mapa);height:var(--mapa);" +
+        "box-sizing:border-box;border:3px solid #7c7c7c;border-radius:8px;background:#3a3a3a;" +
+        "box-shadow:0 0 10px rgba(0,0,0,0.85);}" +
+        // celular (vertical u horizontal) y pantallas táctiles: todo más chico
+        "@media (max-width:600px),(max-height:520px),(pointer:coarse){" +
+        "#hudTiempo{--tam:108px;--mapa:86px;--tmapa:16px;top:10px;left:10px;gap:8px;}" +
+        "#hudTiempo .rCentro{font-size:17px;}" +
+        "#hudTiempo .rNombre{font-size:13px;}" +
+        "#hudTiempo .mapaTitulo{font-size:0.7rem;letter-spacing:1px;}" +
+        "#hudTiempo .mapaCaja{border-width:2px;border-radius:6px;}}";
     document.head.appendChild(estiloHud);
 
     function polar(a, r) {
@@ -631,46 +641,78 @@ if (!gl) {
         return (100 + r * Math.cos(t)).toFixed(2) + "," + (100 + r * Math.sin(t)).toFixed(2);
     }
 
+    const FUENTE = "font-family=\"'Cinzel Decorative',serif\"";
     let svg = "";
     for (const q of CUADRANTES) {
-        svg += '<path id="rQ_' + q.id + '" fill="' + COLORES_RUEDA[q.id] + '" ' +
+        svg += '<path id="rQ_' + q.id + '" fill="' + COLORES_RUEDA[q.id].apagado + '" ' +
             'stroke="rgba(0,0,0,0.45)" stroke-width="1.5" ' +
-            'd="M100,100 L' + polar(q.ini, 94) + " A94,94 0 0 1 " + polar(q.fin, 94) + ' Z"/>';
+            'd="M100,100 L' + polar(q.ini, R_RUEDA) + " A" + R_RUEDA + "," + R_RUEDA + " 0 0 1 " + polar(q.fin, R_RUEDA) + ' Z"/>';
     }
-    // brillo suave: más claro en el medio, más oscuro hacia el borde
-    svg += '<circle cx="100" cy="100" r="94" fill="url(#rBrillo)"/>' +
-        '<circle cx="100" cy="100" r="94" fill="none" stroke="rgba(0,0,0,0.7)" stroke-width="3"/>';
+    // brillo suave del borde + contorno oscuro
+    svg += '<circle id="rBrilloC" cx="100" cy="100" r="' + R_RUEDA + '" fill="url(#rBrillo)"/>' +
+        '<circle cx="100" cy="100" r="' + R_RUEDA + '" fill="none" stroke="rgba(0,0,0,0.7)" stroke-width="3"/>';
     for (const q of CUADRANTES) {
-        const r = q.arriba ? 68 : 82;
+        const r = q.arriba ? 58 : 71;
         const arco = q.arriba
             ? "M" + polar(q.ini, r) + " A" + r + "," + r + " 0 0 1 " + polar(q.fin, r)
             : "M" + polar(q.fin, r) + " A" + r + "," + r + " 0 0 0 " + polar(q.ini, r);
-        const nombre = q.id === "otono" ? "OTOÑO" : q.id.toUpperCase();
         svg += '<path id="rArco_' + q.id + '" d="' + arco + '" fill="none"/>' +
-            '<text font-size="13" letter-spacing="1.5" text-anchor="middle" fill="#1a120a" ' +
-            'font-family="\'Cinzel Decorative\',serif">' +
-            '<textPath href="#rArco_' + q.id + '" startOffset="50%">' + nombre + '</textPath></text>';
+            '<text id="rT_' + q.id + '" class="rLabel" text-anchor="middle" ' + FUENTE + '>' +
+            '<textPath href="#rArco_' + q.id + '" startOffset="50%">' + q.id.toUpperCase().replace("OTONO", "OTOÑO") + '</textPath></text>';
     }
-    const letra = 'text-anchor="middle" x="100" fill="#1a120a" font-family="\'Cinzel Decorative\',serif" font-weight="700"';
-    svg += '<text id="rAnio" ' + letra + ' y="91" font-size="15"></text>' +
-        '<text id="rDia" ' + letra + ' y="109" font-size="15"></text>' +
-        '<text id="rNombre" ' + letra + ' y="127" font-size="12"></text>';
+    const letra = 'text-anchor="middle" x="100" fill="#f3e9d6" ' + FUENTE + ' font-weight="700"';
+    svg += '<circle cx="100" cy="100" r="50" fill="rgba(0,0,0,0.38)"/>' +
+        '<text id="rAnio" class="rCentro" ' + letra + ' y="91"></text>' +
+        '<text id="rDia" class="rCentro" ' + letra + ' y="109"></text>' +
+        '<text id="rNombre" class="rNombre" ' + letra + ' y="127"></text>' +
+        // flechita: apunta al centro desde el borde (se gira alrededor de la rueda)
+        '<g id="rFlecha"><polygon points="' + (100 + R_RUEDA + 2) + ',100 ' + (100 + R_RUEDA + 14) + ',93 ' +
+        (100 + R_RUEDA + 14) + ',107" fill="#fff3d6" stroke="rgba(0,0,0,0.8)" stroke-width="1" ' +
+        'stroke-linejoin="round"/></g>';
 
     const hudEstacion = document.createElement("div");
     hudEstacion.id = "hudTiempo";
     hudEstacion.innerHTML =
         '<svg class="rueda" viewBox="0 0 200 200">' +
         '<defs><radialGradient id="rBrillo" cx="50%" cy="50%" r="50%">' +
-        '<stop offset="0%" stop-color="#fff" stop-opacity="0.12"/>' +
+        '<stop offset="0%" stop-color="#fff" stop-opacity="0.10"/>' +
         '<stop offset="70%" stop-color="#fff" stop-opacity="0"/>' +
-        '<stop offset="100%" stop-color="#000" stop-opacity="0.35"/>' +
-        '</radialGradient></defs>' + svg + '</svg>' +
+        '<stop offset="100%" stop-color="#000" stop-opacity="0.30"/>' +
+        '</radialGradient>' +
+        '<filter id="rResplandor" x="-30%" y="-30%" width="160%" height="160%">' +
+        '<feGaussianBlur stdDeviation="3.5" result="b"/>' +
+        '<feMerge><feMergeNode in="b"/><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>' +
+        '</filter></defs>' + svg + '</svg>' +
         '<div><div class="mapaTitulo">Mapa</div><canvas class="mapaCaja"></canvas></div>';
     document.body.appendChild(hudEstacion);
 
     const rAnio = hudEstacion.querySelector("#rAnio");
     const rDia = hudEstacion.querySelector("#rDia");
     const rNombre = hudEstacion.querySelector("#rNombre");
+    const rFlecha = hudEstacion.querySelector("#rFlecha");
+    const rBrilloC = hudEstacion.querySelector("#rBrilloC");
+
+    // Flechita: se desliza suave hasta el día nuevo
+    let angFlecha = null;
+    let animFlecha = 0;
+    function ponerFlecha(grados) {
+        angFlecha = grados;
+        rFlecha.setAttribute("transform", "rotate(" + grados.toFixed(2) + " 100 100)");
+    }
+    function moverFlecha(objetivo) {
+        if (angFlecha === null) { ponerFlecha(objetivo); return; }
+        let delta = (((objetivo - angFlecha) % 360) + 360) % 360;
+        if (delta > 180) delta -= 360;
+        const desde = angFlecha;
+        const t0 = performance.now();
+        cancelAnimationFrame(animFlecha);
+        (function paso(t) {
+            const k = Math.min(1, (t - t0) / 700);
+            ponerFlecha(desde + delta * (1 - Math.pow(1 - k, 3)));
+            if (k < 1) animFlecha = requestAnimationFrame(paso);
+        })(t0);
+    }
+    window.reiniciarFlechaEstacion = function () { angFlecha = null; };
 
     function pintarRueda(estado) {
         rAnio.textContent = "Año: " + estado.anio;
@@ -678,8 +720,21 @@ if (!gl) {
         rNombre.textContent = estado.estacion.nombre;
         for (const q of CUADRANTES) {
             const activa = q.id === estado.estacion.id;
-            hudEstacion.querySelector("#rQ_" + q.id).setAttribute("opacity", activa ? "1" : "0.55");
+            const trozo = hudEstacion.querySelector("#rQ_" + q.id);
+            trozo.setAttribute("fill", activa ? COLORES_RUEDA[q.id].brillo : COLORES_RUEDA[q.id].apagado);
+            if (activa) {
+                trozo.setAttribute("filter", "url(#rResplandor)");
+                trozo.parentNode.insertBefore(trozo, rBrilloC); // arriba de las otras, para que el brillo se vea
+            } else {
+                trozo.removeAttribute("filter");
+            }
+            const rotulo = hudEstacion.querySelector("#rT_" + q.id);
+            rotulo.setAttribute("fill", activa ? "#1a120a" : "#e6d9c2");
+            rotulo.setAttribute("fill-opacity", activa ? "1" : "0.8");
         }
+        const q = CUADRANTES.find(function (c) { return c.id === estado.estacion.id; });
+        const avance = (estado.diaEnEstacion - 0.5) / Estaciones.DIAS_POR_ESTACION;
+        moverFlecha(q.ini + avance * 90);
     }
 
     // ----- Mapa -----
@@ -691,28 +746,15 @@ if (!gl) {
     mapaCanvas.height = MAPA_PX;
     const mapaCtx = mapaCanvas.getContext("2d");
 
-    function mapaPos(v) {
-        return (v + MUNDO_MITAD) / (2 * MUNDO_MITAD) * MAPA_PX;
-    }
-
-    const mapaBase = document.createElement("canvas");
-    mapaBase.width = MAPA_PX;
-    mapaBase.height = MAPA_PX;
-    (function () {
-        const c = mapaBase.getContext("2d");
-        c.fillStyle = "#3a3a3a";            // terrenos
-        c.fillRect(0, 0, MAPA_PX, MAPA_PX);
-        function rect(r, color) {
-            c.fillStyle = color;
-            c.fillRect(mapaPos(r[0]), mapaPos(r[1]), mapaPos(r[2]) - mapaPos(r[0]), mapaPos(r[3]) - mapaPos(r[1]));
-        }
-        for (const calle of CALLES) rect(calle, "#777777");   // calles
-        for (const casa of CASAS) rect(casa, "#c4c4c4");      // casas
-    })();
+    // El mapa te sigue: vos quedás siempre en el medio y el mundo se mueve.
+    // RADIO_VISTA = cuántas unidades del mundo se ven hacia cada lado (más chico = más zoom).
+    const RADIO_VISTA = 20;
+    const MAPA_ESCALA = MAPA_PX / (2 * RADIO_VISTA);
+    const MAPA_MEDIO = MAPA_PX / 2;
 
     function puntoMapa(x, z, color, radio) {
-        const mx = Math.max(radio, Math.min(MAPA_PX - radio, mapaPos(x)));
-        const mz = Math.max(radio, Math.min(MAPA_PX - radio, mapaPos(z)));
+        const mx = Math.max(radio, Math.min(MAPA_PX - radio, MAPA_MEDIO + (x - px) * MAPA_ESCALA));
+        const mz = Math.max(radio, Math.min(MAPA_PX - radio, MAPA_MEDIO + (z - pz) * MAPA_ESCALA));
         mapaCtx.beginPath();
         mapaCtx.arc(mx, mz, radio, 0, Math.PI * 2);
         mapaCtx.fillStyle = color;
@@ -722,15 +764,29 @@ if (!gl) {
         mapaCtx.stroke();
     }
 
+    function rectMapa(r, color) {
+        mapaCtx.fillStyle = color;
+        mapaCtx.fillRect(
+            MAPA_MEDIO + (r[0] - px) * MAPA_ESCALA,
+            MAPA_MEDIO + (r[1] - pz) * MAPA_ESCALA,
+            (r[2] - r[0]) * MAPA_ESCALA,
+            (r[3] - r[1]) * MAPA_ESCALA
+        );
+    }
+
     function dibujarMapa() {
         if (!estacionesJuego.activo) return;
-        mapaCtx.drawImage(mapaBase, 0, 0);
+        mapaCtx.fillStyle = "#1f1f1f";                                      // fuera del mundo
+        mapaCtx.fillRect(0, 0, MAPA_PX, MAPA_PX);
+        rectMapa([-MUNDO_MITAD, -MUNDO_MITAD, MUNDO_MITAD, MUNDO_MITAD], "#3a3a3a"); // terrenos
+        for (const calle of CALLES) rectMapa(calle, "#777777");             // calles
+        for (const casa of CASAS) rectMapa(casa, "#c4c4c4");                // casas
         for (const id in otros) {
             if (id === String(miId)) continue;
             const j = otros[id];
-            puntoMapa(j.x, j.z, "#ffffff", 6);
+            puntoMapa(j.x, j.z, "#ffffff", 6);                              // los demás
         }
-        puntoMapa(px, pz, "#e02b2b", 7);
+        puntoMapa(px, pz, "#e02b2b", 7);             // vos
     }
 
     window.iniciarEstaciones = function (config) {
@@ -743,6 +799,7 @@ if (!gl) {
         e.indiceAnterior = -1;
         e.textoHud = "";
         e.reiniciarAmbiente = true;
+        window.reiniciarFlechaEstacion();
         hudEstacion.style.display = "flex";
     };
 

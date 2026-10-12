@@ -448,6 +448,7 @@ wss.on("connection", function (socket, req) {
                     pl: Number.isInteger(datos.pl) && datos.pl >= 0 && datos.pl <= 8 ? datos.pl : 0,
                     am: typeof datos.am === "number" ? Math.max(0, Math.min(1, datos.am)) : 0,
                     ac: datos.ac ? 1 : 0,
+                    zn: datos.zn ? 1 : 0,      // 1 = adentro de su casa (zona cerrada), 0 = en el barrio
                     n: sala.jugadores[id].n
                 };
             }

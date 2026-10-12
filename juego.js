@@ -50,7 +50,8 @@ if (!gl) {
     const colisiones = [];
 
     // Dibuja una caja entre dos esquinas (x1,y1,z1) y (x2,y2,z2)
-    function caja(x1, y1, z1, x2, y2, z2, color, solida) {
+    function caja(x1, y1, z1, x2, y2, z2, color, solida, destino) {
+        const salida = destino || datos;
         const caras = [
             [[x1,y2,z1],[x2,y2,z1],[x2,y2,z2],[x1,y2,z2], 1.00],
             [[x1,y1,z2],[x2,y1,z2],[x2,y2,z2],[x1,y2,z2], 0.85],
@@ -64,7 +65,7 @@ if (!gl) {
             const c = [color[0] * brillo, color[1] * brillo, color[2] * brillo];
             const orden = [0, 1, 2, 0, 2, 3];
             for (const i of orden) {
-                datos.push(cara[i][0], cara[i][1], cara[i][2], c[0], c[1], c[2]);
+                salida.push(cara[i][0], cara[i][1], cara[i][2], c[0], c[1], c[2]);
             }
         }
         if (solida) {
@@ -113,6 +114,9 @@ if (!gl) {
     let MUNDO_INICIAL = [];                 // objetos sueltos { id, x, y, z }
     let SPAWN = { x: 0, z: 9, yaw: 0 };
     let semillaMundo = null;
+    let zona = "barrio";                    // dónde estás: "casa" (zona cerrada, no carga nada más) o "barrio" (las casas ya hechas)
+    let COMPLETO = null;                    // el barrio entero, guardado mientras estás adentro de tu casa
+    let casaPropia = null;                  // { idx, rect, spawnFuera, spawnDentro }
 
     const PARED = [0.55, 0.50, 0.45];
     const MADERA = [0.45, 0.30, 0.18];
@@ -562,6 +566,7 @@ if (!gl) {
             return da - db;
         })[0];
         SPAWN = inicial.spawn;
+        casaPropia = { idx: casas.indexOf(inicial), rect: inicial.rect, spawnFuera: inicial.spawn, spawnDentro: puntoLibreAdentro(inicial) };
         const R2 = crearAzar((semilla ^ 0x5bd1e995) >>> 0);
         const casasConLlave = [];
         casas.forEach(function (c, i) {
@@ -599,7 +604,101 @@ if (!gl) {
         cantidad = datos.length / 6;
         gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
         gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(datos), gl.STATIC_DRAW);
+
+        // el barrio entero queda guardado: mientras estás en tu casa no se dibuja ni se mueve nada de afuera
+        COMPLETO = { datos: datos, colisiones: colisiones.slice(), PUERTAS: PUERTAS, VENTANAS: VENTANAS, NPCS: NPCS, casa: null };
+        zona = "barrio";
     }
+
+    // ===== ZONAS =====
+    // Arrancás adentro de tu casa: una zona cerrada y no carga nada más. De noche, desde las 12:00 AM,
+    // podés salir por la puerta y elegir a dónde ir (ver "SALIR DE CASA"). Por ahora el único lugar que se puede
+    // elegir son las casas que ya están hechas (el "barrio"); los demás lugares están los botones pero vacíos.
+    const SALIDA_DESDE = 0;            // minuto del día en que se abre la salida: 0 = 12:00 AM (medianoche)
+    const SALIDA_HASTA = 7 * 60;       // ...y se cierra a las 7:00 AM
+    const PATIO = 1.8;                 // el terreno cerrado que rodea la casa
+
+    // Un punto libre adentro de la casa (sin tocar el azar del mapa, para que el mapa salga igual que siempre)
+    function puntoLibreAdentro(c) {
+        for (let r = 0; r <= 4; r += 0.5) {
+            for (let k = 0; k < 16; k++) {
+                const a = k / 16 * Math.PI * 2;
+                const lx = Math.cos(a) * r, lz = Math.sin(a) * r;
+                if (lx < -c.w + c.t + 0.6 || lx > c.w - c.t - 0.6 || lz < -c.d + c.t + 0.6 || lz > c.d - c.t - 0.6) continue;
+                const p = c.T(lx, lz);
+                if (c.locales.some(function (m) { return lx > m[0] - 0.5 && lx < m[2] + 0.5 && lz > m[1] - 0.5 && lz < m[3] + 0.5; })) continue;
+                if (c.tabiques.some(function (q) { return p[0] > q[0] - 0.5 && p[0] < q[2] + 0.5 && p[1] > q[1] - 0.5 && p[1] < q[3] + 0.5; })) continue;
+                return { x: p[0], z: p[1], yaw: c.spawn.yaw };
+            }
+        }
+        const q = c.T(0, 0);
+        return { x: q[0], z: q[1], yaw: c.spawn.yaw };
+    }
+
+    // Solo la casa (paredes, techo, muebles, puertas y ventanas) + un patio cerrado alrededor
+    function prepararCasa() {
+        if (COMPLETO.casa) return COMPLETO.casa;
+        const r = casaPropia.rect, m = 1.3;
+        const x1 = r[0] - m, z1 = r[1] - m, x2 = r[2] + m, z2 = r[3] + m;
+        const d = COMPLETO.datos, out = [];
+        const dentro = function (i) { return d[i] >= x1 && d[i] <= x2 && d[i + 2] >= z1 && d[i + 2] <= z2; };
+        for (let i = 0; i + 17 < d.length; i += 18) {         // 3 puntas por triángulo, 6 números por punta
+            if (dentro(i) && dentro(i + 6) && dentro(i + 12)) for (let k = 0; k < 18; k++) out.push(d[i + k]);
+        }
+        const px1 = r[0] - PATIO, pz1 = r[1] - PATIO, px2 = r[2] + PATIO, pz2 = r[3] + PATIO;
+        caja(px1, -0.1, pz1, px2, 0, pz2, [0.25, 0.26, 0.28], false, out);       // suelo del patio
+        const cols = [];
+        const esp = 0.8, alto = 4.5;
+        [[px1 - esp, pz1 - esp, px2 + esp, pz1], [px1 - esp, pz2, px2 + esp, pz2 + esp], [px1 - esp, pz1, px1, pz2], [px2, pz1, px2 + esp, pz2]].forEach(function (w) {
+            caja(w[0], 0, w[1], w[2], alto, w[3], ESCOMBRO, false, out);        // muro que cierra la zona
+            cols.push([w[0], w[1], w[2], w[3], alto, 0]);
+        });
+        const colsNpc = new Set(COMPLETO.NPCS.map(function (n) { return n.col; }));
+        COMPLETO.colisiones.forEach(function (c) {
+            if (colsNpc.has(c)) return;
+            if (c[0] < x2 && c[2] > x1 && c[1] < z2 && c[3] > z1) cols.push(c);
+        });
+        COMPLETO.casa = {
+            datos: out, colisiones: cols,
+            PUERTAS: COMPLETO.PUERTAS.filter(function (o) { return o.casa === casaPropia.idx; }),
+            VENTANAS: COMPLETO.VENTANAS.filter(function (o) { return o.casa === casaPropia.idx; })
+        };
+        return COMPLETO.casa;
+    }
+
+    function cargarBuffer(arr) {
+        gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(arr), gl.STATIC_DRAW);
+        cantidad = arr.length / 6;
+    }
+
+    // Cambia lo que está cargado: "casa" (solo tu casa) o "barrio" (todo)
+    function entrarZona(z) {
+        if (!COMPLETO || !casaPropia) return;
+        zona = z;
+        colisiones.length = 0;
+        if (z === "casa") {
+            const h = prepararCasa();
+            h.colisiones.forEach(function (c) { colisiones.push(c); });
+            PUERTAS = h.PUERTAS; VENTANAS = h.VENTANAS; NPCS = [];
+            cargarBuffer(h.datos);
+        } else {
+            COMPLETO.colisiones.forEach(function (c) { colisiones.push(c); });
+            PUERTAS = COMPLETO.PUERTAS; VENTANAS = COMPLETO.VENTANAS; NPCS = COMPLETO.NPCS;
+            cargarBuffer(COMPLETO.datos);
+        }
+    }
+    // Puertas y ventanas de TODO el barrio (para guardar, para el servidor y para reiniciar)
+    function todasAberturas() {
+        return COMPLETO ? COMPLETO.PUERTAS.concat(COMPLETO.VENTANAS) : PUERTAS.concat(VENTANAS);
+    }
+    function enPatio(x, z) {
+        const r = casaPropia && casaPropia.rect;
+        return !!r && x > r[0] - PATIO - 0.5 && x < r[2] + PATIO + 0.5 && z > r[1] - PATIO - 0.5 && z < r[3] + PATIO + 0.5;
+    }
+    // Solo se ven y se tocan entre sí los jugadores que están en la misma zona
+    function mismaZona(j) { return ((j && j.zn) | 0) === (zona === "casa" ? 1 : 0); }
+
     construirMundo(1);
 
     // ===== SHADERS =====
@@ -811,7 +910,7 @@ if (!gl) {
     });
 
     document.addEventListener("mousemove", function (e) {
-        if (document.pointerLockElement !== canvas || window.juegoPausado) return;
+        if (document.pointerLockElement !== canvas || window.juegoPausado || window.chatAbierto) return;
         yaw -= e.movementX * 0.002 * A.sensMouse;
         pitch -= e.movementY * 0.002 * A.sensMouse * (A.invertirY ? -1 : 1);
         pitch = Math.max(-1.5, Math.min(1.5, pitch));
@@ -890,6 +989,7 @@ if (!gl) {
         "F o click: pegar<br>" +
         "E: recoger / dormir (cerca de la cama) · Q: tirar<br>" +
         "I: inventario · 1-7: barra rápida · B: bailar<br>" +
+        "Enter: escribirles a los NPCs · V: micrófono<br>" +
         "Esc: pausa"
     document.body.appendChild(ayuda); 
     if ("ontouchstart" in window) {
@@ -1076,6 +1176,7 @@ if (!gl) {
         for (const id in otros) {
             if (id === String(miId)) continue;
             const j = otros[id];
+            if (!mismaZona(j)) continue;
             const y = j.y || 0;
             const p = (j.p === 1 || j.p === 2) ? j.p : 0;
 
@@ -1257,6 +1358,7 @@ if (!gl) {
                 q: [inv.equipo.cabeza, inv.equipo.torso, inv.equipo.piernas, inv.equipo.pies, inv.equipo.espalda].map(function (x) { return x || ""; }).join(","),
                 ad: accATexto(inv.acc),
                 ba: baile ? baile.id : "",
+                zn: zona === "casa" ? 1 : 0,
                 pl: sv.piernas[0].n * 3 + sv.piernas[1].n,
                 am: Math.round(animMov * 100) / 100, ac: animCorre ? 1 : 0
             }));
@@ -1657,12 +1759,19 @@ if (!gl) {
         if (!estacionesJuego.activo) return;
         mapaCtx.fillStyle = "#1f1f1f";                                      // fuera del mundo
         mapaCtx.fillRect(0, 0, MAPA_PX, MAPA_PX);
-        rectMapa([-MUNDO_MITAD, -MUNDO_MITAD, MUNDO_MITAD, MUNDO_MITAD], "#3a3a3a"); // terrenos
-        for (const calle of CALLES) rectMapa(calle, "#777777");             // calles
-        for (const casa of CASAS) rectMapa(casa, "#c4c4c4");                // casas
+        if (zona === "casa" && casaPropia) {                                // adentro de tu casa: solo se ve ella y su patio
+            const r = casaPropia.rect;
+            rectMapa([r[0] - PATIO, r[1] - PATIO, r[2] + PATIO, r[3] + PATIO], "#3a3a3a");   // terreno
+            rectMapa(r, "#c4c4c4");                                          // casa
+        } else {
+            rectMapa([-MUNDO_MITAD, -MUNDO_MITAD, MUNDO_MITAD, MUNDO_MITAD], "#3a3a3a"); // terrenos
+            for (const calle of CALLES) rectMapa(calle, "#777777");         // calles
+            for (const casa of CASAS) rectMapa(casa, "#c4c4c4");            // casas
+        }
         for (const id in otros) {
             if (id === String(miId)) continue;
             const j = otros[id];
+            if (!mismaZona(j)) continue;
             // sigilo: agachado o arrastrándose solo lo ves si está dentro del radio de su ruido
             if ((j.p === 1 || j.p === 2) && Math.hypot(j.x - px, j.z - pz) > (j.r || 0)) continue;
             puntoMapa(j.x, j.z, "#ffffff", 6);                              // los demás
@@ -1685,7 +1794,7 @@ if (!gl) {
         e.modo = config.modo;
         // el mapa sale de la semilla: misma semilla = mismo mapa (en un servidor lo ven todos igual)
         if (config.semilla && config.semilla !== semillaMundo) construirMundo(config.semilla);
-        px = SPAWN.x; pz = SPAWN.z; yaw = SPAWN.yaw; pitch = 0; saltoY = 0; velY = 0;
+        irACasa();      // siempre se arranca adentro de tu casa
         e.reloj = config.reloj;
         e.desfaseMs = config.desfaseMs || 0;
         e.tiempoJugadoMs = config.tiempoJugadoMs || 0;
@@ -1722,11 +1831,12 @@ if (!gl) {
 
         const estado = estadoEstacion();
 
-        // Hora del día: 1 día = 1 hora real, y el día arranca a las 7:00 a.m.
+        // Hora del día: 1 día = 20 minutos reales, y el día arranca a las 7:00 a.m.
         const msJuego = e.modo === "online" ? Date.now() + e.desfaseMs : e.tiempoJugadoMs;
         const frac = (Math.max(0, msJuego - e.reloj.inicioMs) % Estaciones.MS_POR_DIA) / Estaciones.MS_POR_DIA;
         const minDia = Math.floor(frac * 1440 + 7 * 60) % 1440;
         e.minDia = minDia;
+        actualizarSalidaCasa();
         const h24 = Math.floor(minDia / 60), mm = minDia % 60;
         const textoHora = "Hora: " + (h24 % 12 || 12) + ":" + (mm < 10 ? "0" : "") + mm + (h24 < 12 ? " AM" : " PM");
         if (textoHora !== e.textoHora) { e.textoHora = textoHora; rHora.textContent = textoHora; }
@@ -1772,7 +1882,7 @@ if (!gl) {
     }
 
     // ===== SUPERVIVENCIA =====
-    // Salud, sed, hambre, sueño y cordura. 1 día del juego = 1 hora real (igual que las estaciones).
+    // Salud, sed, hambre, sueño y cordura. 1 día del juego = 20 minutos reales (igual que las estaciones).
     // Todo lo que se puede ajustar está en SV_CONFIG.
     const SV_CONFIG = {
         sedDias: 4,            // la sed llega a 0 a los 4 días (el 5º día te empezás a morir)
@@ -1784,7 +1894,7 @@ if (!gl) {
         recuperaSuenoPorSeg: 3.4,
         regeneracionSalud: 0.15   // puntos por segundo cuando estás bien
     };
-    const DIA_JUEGO_MS = 60 * 60 * 1000;
+    const DIA_JUEGO_MS = 20 * 60 * 1000;
 
     const ENFERMEDADES = {
         resfrio: { nombre: "Resfrío", sev: 15, dias: 3 },
@@ -2205,7 +2315,7 @@ if (!gl) {
 
     document.getElementById("svReaparecer").addEventListener("click", function () {
         reiniciarSV();
-        px = SPAWN.x; pz = SPAWN.z; yaw = SPAWN.yaw; pitch = 0;
+        irACasa();
         pantallaMuerte.style.display = "none";
         cerrarPausaSiHay();
     });
@@ -2694,7 +2804,9 @@ if (!gl) {
 
     function textoAbertura(o, tactil) {
         let t;
-        if (o.esPuerta) {
+        if (o.esPuerta && zona === "casa") {
+            t = salidaAbierta() ? "salir de casa" : "puerta cerrada (se abre a las 12:00 AM)";
+        } else if (o.esPuerta) {
             if (o.abierta) t = "cerrar puerta";
             else if (o.trabada) {
                 const nom = COLORES_LLAVE[o.llave % COLORES_LLAVE.length].n;
@@ -2725,7 +2837,7 @@ if (!gl) {
         if (dentro(px, pz, saltoY)) return true;
         for (const id in otros) {
             if (id === String(miId)) continue;
-            if (dentro(otros[id].x, otros[id].z, otros[id].y || 0)) return true;
+            if (mismaZona(otros[id]) && dentro(otros[id].x, otros[id].z, otros[id].y || 0)) return true;
         }
         return false;
     }
@@ -2749,6 +2861,7 @@ if (!gl) {
         if (pasoVentana) { cruzarVentana(pasoVentana.o); return true; }      // 2º toque mientras cruzás: más rápido
         const o = aberturaCercana();
         if (!o) return false;
+        if (o.esPuerta && zona === "casa") { abrirDestinos(); return true; }       // la puerta de tu casa no se abre: es la salida
         if (o.esPuerta) {
             if (o.abierta) {
                 if (ocupada(o)) { avisar("Hay alguien en la puerta", 1500); return true; }
@@ -2915,12 +3028,12 @@ if (!gl) {
     // Estados: para guardar la partida, para el servidor y para reiniciar
     function estadoAberturas() {
         const e = {};
-        PUERTAS.concat(VENTANAS).forEach(function (o) { e[o.k] = [o.abierta ? 1 : 0, (o.esPuerta ? o.trabada : o.rota) ? 1 : 0]; });
+        todasAberturas().forEach(function (o) { e[o.k] = [o.abierta ? 1 : 0, (o.esPuerta ? o.trabada : o.rota) ? 1 : 0]; });
         return e;
     }
     function aplicarEstados(e, instantaneo, remoto) {
         if (!e || typeof e !== "object") return;
-        PUERTAS.concat(VENTANAS).forEach(function (o) {
+        todasAberturas().forEach(function (o) {
             const v = e[o.k];
             if (!Array.isArray(v)) return;
             if (!o.esPuerta && o.bloqueada) return;                 // una ventana bloqueada nunca se abre
@@ -2931,7 +3044,7 @@ if (!gl) {
         });
     }
     function reiniciarAberturas() {
-        PUERTAS.concat(VENTANAS).forEach(function (o) {
+        todasAberturas().forEach(function (o) {
             fijarAbertura(o, o.ini.a, o.ini.t);
             o.ang = o.ini.a ? 1 : 0;
         });
@@ -4002,6 +4115,7 @@ if (!gl) {
         const lista = [];
         for (const it of inv.mundo) {
             if (Math.hypot(it.x - px, it.z - pz) > 40) continue;
+            if (zona === "casa" && !enPatio(it.x, it.z)) continue;
             const f = FORMA_ITEM[it.id] || [0.3, 0.2, 0.3];
             const giro = (Math.sin(it.x * 12.9898 + it.z * 78.233) * 43758.5453 % 1 + 1) % 1 * Math.PI * 2;   // un ángulo fijo por objeto
             cajaGirada(lista, it.x, it.z, giro, f[0], it.y + 0.01, it.y + 0.01 + f[1], f[2], 0, COLOR_ITEM[it.id]);
@@ -4103,7 +4217,7 @@ if (!gl) {
         for (const id in otros) {
             if (id === String(miId)) continue;
             const j = otros[id];
-            if (j && typeof j.x === "number" && typeof j.z === "number") l.push({ id: id, x: j.x, z: j.z, y: j.y || 0, yo: false, vivo: true });
+            if (j && mismaZona(j) && typeof j.x === "number" && typeof j.z === "number") l.push({ id: id, x: j.x, z: j.z, y: j.y || 0, yo: false, vivo: true });
         }
         return l;
     }
@@ -4404,7 +4518,8 @@ if (!gl) {
     // Cada NPC dentro de ese alcance queda con n.oyeVoz = true (y n.distVoz = distancia).
     // Las paredes tapan: si vos y el NPC no están en el mismo lugar (adentro de la misma casa o los dos afuera), el alcance se achica a la mitad.
     const voz = { activo: false, pidiendo: false, ctx: null, analizador: null, buf: null, stream: null,
-        sueloDb: -60, calib: 0, nivel: 0, radio: 0, oyen: 0, acumHud: 0, pico: 0, picoT: 0, rec: null };
+        sueloDb: -60, calib: 0, nivel: 0, radio: 0, oyen: 0, acumHud: 0, pico: 0, picoT: 0, rec: null,
+        env: -90, habla: null, vozT: 0, altoT: 0, medidor: false, estado: "" };
     const cajaVoz = document.createElement("div");
     cajaVoz.style.cssText = "position:fixed;top:20px;right:150px;z-index:790;display:none;font:600 .85rem sans-serif;color:#fff;text-align:right;";
     const estiloBtnVoz = "padding:.35rem .8rem;font:600 .85rem sans-serif;color:#fff;background:rgba(0,0,0,.55);" +
@@ -4412,10 +4527,11 @@ if (!gl) {
     const botonVoz = document.createElement("button");
     botonVoz.style.cssText = estiloBtnVoz;
     botonVoz.textContent = "🎤 Voz: off";
+    botonVoz.title = "Prender / apagar el micrófono (en la compu: tecla V)";
     const botonTexto = document.createElement("button");
     botonTexto.style.cssText = estiloBtnVoz;
     botonTexto.textContent = "💬";
-    botonTexto.title = "Escribirle algo a los NPCs (para probar sin micrófono)";
+    botonTexto.title = "Escribirles a los NPCs (en la compu: tecla Enter)";
     const lineaVoz = document.createElement("div");
     lineaVoz.style.cssText = "margin-top:6px;max-width:320px;margin-left:auto;text-shadow:0 1px 3px #000;opacity:0;transition:opacity .5s;";
     cajaVoz.appendChild(botonVoz); cajaVoz.appendChild(botonTexto); cajaVoz.appendChild(lineaVoz);
@@ -4427,33 +4543,44 @@ if (!gl) {
         }
         return -1;
     }
+    // En el celular el navegador no deja que dos cosas usen el micrófono a la vez: si se abre el medidor de volumen, el reconocimiento de voz
+    // se queda sordo (error "audio-capture"). Por eso en el celular solo se usa el reconocimiento de voz (sin medir volumen: se habla "normal").
+    const ES_CELU = ("ontouchstart" in window) || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || "");
     async function activarMicrofono() {
         if (voz.activo || voz.pidiendo) return;
-        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-            avisar("Este navegador no deja usar el micrófono (hace falta https)", 3500);
+        const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+        const puedeMedir = !ES_CELU && !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+        if (!SR && !puedeMedir) {
+            avisar(navigator.mediaDevices ? "Este navegador no reconoce voz: usá el botón 💬 para escribirles" : "Este navegador no deja usar el micrófono (hace falta https): usá el botón 💬", 4500);
             return;
         }
         voz.pidiendo = true;
-        try {
-            const stream = await navigator.mediaDevices.getUserMedia({
-                audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: false }
-            });
-            const AC = window.AudioContext || window.webkitAudioContext;
-            const ctx = new AC();
-            if (ctx.state === "suspended") { try { await ctx.resume(); } catch (e) {} }
-            const fuente = ctx.createMediaStreamSource(stream);
-            const analizador = ctx.createAnalyser();
-            analizador.fftSize = 1024;
-            fuente.connect(analizador);                    // no se conecta a los parlantes: no te escuchás
-            voz.stream = stream; voz.ctx = ctx; voz.analizador = analizador;
-            voz.buf = new Float32Array(analizador.fftSize);
-            voz.sueloDb = -60; voz.calib = 1.5; voz.nivel = 0; voz.radio = 0;
-            voz.activo = true;
-            avisar("Micrófono prendido: quedate callado un segundito para calibrar", 3000);
-            iniciarReconocimiento();
-        } catch (e) {
-            avisar("No pude usar el micrófono (permiso denegado)", 3000);
+        voz.medidor = false;
+        voz.sueloDb = -60; voz.calib = 0; voz.nivel = 0; voz.radio = 0;
+        voz.env = -90; voz.habla = null; voz.vozT = 0; voz.altoT = 0; voz.pico = 0; voz.estado = "";
+        if (puedeMedir) {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: false }
+                });
+                const AC = window.AudioContext || window.webkitAudioContext;
+                const ctx = new AC();
+                if (ctx.state === "suspended") { try { await ctx.resume(); } catch (e) {} }
+                const fuente = ctx.createMediaStreamSource(stream);
+                const analizador = ctx.createAnalyser();
+                analizador.fftSize = 1024;
+                fuente.connect(analizador);                    // no se conecta a los parlantes: no te escuchás
+                voz.stream = stream; voz.ctx = ctx; voz.analizador = analizador;
+                voz.buf = new Float32Array(analizador.fftSize);
+                voz.calib = 1.5;
+                voz.medidor = true;
+            } catch (e) {
+                if (!SR) { avisar("No pude usar el micrófono (permiso denegado)", 3000); voz.pidiendo = false; return; }
+            }
         }
+        voz.activo = true;
+        avisar(voz.medidor ? "Micrófono prendido: quedate callado un segundito para calibrar" : "Micrófono prendido: hablá y los NPCs cercanos te escuchan", 3000);
+        iniciarReconocimiento();
         voz.pidiendo = false;
     }
     function desactivarMicrofono() {
@@ -4462,7 +4589,7 @@ if (!gl) {
         detenerReconocimiento();
         try { voz.stream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {}
         try { voz.ctx.close(); } catch (e) {}
-        voz.stream = null; voz.ctx = null; voz.analizador = null;
+        voz.stream = null; voz.ctx = null; voz.analizador = null; voz.estado = "";
         voz.nivel = 0; voz.radio = 0; voz.oyen = 0;
         for (const n of NPCS) { n.oyeVoz = false; n.distVoz = 0; }
         avisar("Micrófono apagado", 1500);
@@ -5228,7 +5355,7 @@ if (!gl) {
             hab("Tomá, llevate esto.");
         };
         // gritar enoja o asusta, y no calma a nadie
-        if (grito && intent !== "amenaza" && intent !== "insulto") {
+        if (grito && intent !== "amenaza" && intent !== "insulto" && intent !== "ayuda") {      // gritar "¡ayuda!" es normal: ahí sí contesta
             if (duro) hab("¡Y a mí no me grités!");
             else { n.asustadoPor[idJ] = ahoraMs + 6000; hab("¡No grites, por favor!"); }
             return;
@@ -5347,7 +5474,7 @@ if (!gl) {
             return;
         }
         const radio = escrito ? 8 : Math.max(6, voz.pico);          // hablando se usa el volumen reciente de tu micrófono
-        const grito = !escrito && radio >= 15;
+        const grito = !escrito && radio >= 17 && voz.vozT >= 3;
         // ¿Quiere saber algo? ("¿qué es un volcán?", "contame sobre Japón", "contame más"): se contesta con lo que dice internet
         const consulta = detectarConsulta(texto);
         if (consulta) { responderConsulta(consulta); return; }
@@ -5382,38 +5509,115 @@ if (!gl) {
     function iniciarReconocimiento() {
         const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
         if (!SR) { avisar("Este navegador no reconoce voz: usá el botón 💬 para escribirles", 4000); return; }
-        try {
-            const rec = new SR();
-            rec.lang = "es-AR";
+        const idiomas = ["es-AR", "es-419", "es-ES", "es"];      // si el celular no tiene uno, prueba con el siguiente
+        let iIdioma = 0, fallos = 0, ultimoTexto = "", ultimoT = 0;
+        const lanzar = function () {
+            if (!voz.activo) return;
+            let rec;
+            try { rec = new SR(); } catch (e) { voz.rec = null; return; }
+            rec.lang = idiomas[iIdioma];
             rec.continuous = true;
-            rec.interimResults = false;
+            rec.interimResults = true;                             // muestra lo que va entendiendo mientras hablás
+            rec.maxAlternatives = 1;
+            const hechos = {};                                     // algunos celulares repiten los resultados ya terminados
+            rec.onstart = function () { voz.estado = "escuchando…"; };
             rec.onresult = function (e) {
+                let parcial = "";
+                fallos = 0;
                 for (let i = e.resultIndex; i < e.results.length; i++) {
-                    if (e.results[i].isFinal) procesarFrase(e.results[i][0].transcript, false);
+                    const r = e.results[i], txt = String(r[0].transcript || "").trim();
+                    if (!txt) continue;
+                    if (!r.isFinal) { parcial += txt + " "; continue; }
+                    const clave = i + "|" + txt;
+                    if (hechos[clave]) continue;
+                    hechos[clave] = true;
+                    const ahora = performance.now();
+                    if (txt === ultimoTexto && ahora - ultimoT < 2500) continue;
+                    ultimoTexto = txt; ultimoT = ahora;
+                    procesarFrase(txt, false);
                 }
+                if (parcial.trim()) decirHud("🎤 " + parcial.trim(), 2500);
             };
-            rec.onend = function () { if (voz.activo && voz.rec === rec) { try { rec.start(); } catch (err) {} } };
             rec.onerror = function (e) {
-                if (e.error === "not-allowed" || e.error === "service-not-allowed") {
-                    avisar("No hay permiso para reconocer voz: usá el botón 💬", 3500);
-                    voz.rec = null;
-                }
+                const c = e && e.error;
+                if (c === "not-allowed" || c === "service-not-allowed") {
+                    avisar("No hay permiso para el micrófono: activalo en los ajustes del navegador, o usá el botón 💬", 5000);
+                    voz.estado = "sin permiso";
+                    voz.rec = null; fallos = 99;
+                } else if (c === "language-not-supported") {
+                    if (iIdioma < idiomas.length - 1) iIdioma++;
+                } else if (c === "network") {
+                    avisar("El reconocimiento de voz necesita internet", 3500);
+                    voz.estado = "sin internet"; fallos++;
+                } else if (c === "audio-capture") {
+                    avisar("No pude captar el micrófono (¿otra app lo está usando?)", 4000);
+                    voz.estado = "sin micrófono"; fallos++;
+                }                                                  // "no-speech" y "aborted" son normales: se reinicia solo
+            };
+            rec.onend = function () {
+                if (!voz.activo || voz.rec !== rec) return;
+                if (fallos >= 6) { avisar("Se cortó el micrófono. Probá de nuevo o usá el botón 💬", 4000); desactivarMicrofono(); return; }
+                setTimeout(lanzar, 300);                           // el celular corta cada tanto: se vuelve a abrir
             };
             voz.rec = rec;
-            rec.start();
-        } catch (e) { voz.rec = null; }
+            try { rec.start(); } catch (e) { fallos++; setTimeout(lanzar, 600); }
+        };
+        lanzar();
     }
     function detenerReconocimiento() {
         const rec = voz.rec;
         voz.rec = null;
         if (rec) { rec.onend = null; try { rec.stop(); } catch (e) {} }
     }
-    botonTexto.addEventListener("click", function () {
-        botonTexto.blur();
-        if (document.pointerLockElement) { try { document.exitPointerLock(); } catch (e) {} }
-        const t = window.prompt("¿Qué les decís a los NPCs que tengas cerca?");
-        if (t) procesarFrase(t, true);
+    // ----- Escribirles a los NPCs con el teclado: Enter abre el cuadro, Enter envía y Esc cancela -----
+    // No se suelta el mouse (si no, el juego se pausa): el cuadro toma el teclado y el personaje se queda quieto mientras escribís.
+    const cajaChat = document.createElement("div");
+    cajaChat.style.cssText = "position:fixed;left:50%;bottom:90px;transform:translateX(-50%);z-index:795;display:none;width:min(520px,90vw);" +
+        "background:rgba(0,0,0,.72);border:1px solid rgba(255,255,255,.4);border-radius:10px;padding:8px 10px;box-sizing:border-box;";
+    const campoChat = document.createElement("input");
+    campoChat.type = "text";
+    campoChat.maxLength = 140;
+    campoChat.autocomplete = "off";
+    campoChat.spellcheck = false;
+    campoChat.placeholder = "Escribile a los NPCs que tengas cerca…  (Enter: enviar · Esc: cancelar)";
+    campoChat.style.cssText = "width:100%;box-sizing:border-box;background:#111;color:#fff;border:1px solid #666;border-radius:6px;padding:.5rem .65rem;font:16px sans-serif;outline:none;";
+    cajaChat.appendChild(campoChat);
+    document.body.appendChild(cajaChat);
+    window.chatAbierto = false;
+    function abrirChat() {
+        if (window.chatAbierto || window.juegoPausado || !sv.activo || !sv.vivo) return;
+        window.chatAbierto = true;
+        if (window.soltarControles) window.soltarControles();        // por si venías caminando
+        cajaChat.style.display = "block";
+        campoChat.value = "";
+        setTimeout(function () { campoChat.focus(); }, 0);
+    }
+    function cerrarChat() {
+        if (!window.chatAbierto) return;
+        window.chatAbierto = false;
+        cajaChat.style.display = "none";
+        campoChat.blur();
+    }
+    campoChat.addEventListener("keydown", function (e) {
+        e.stopPropagation();                                          // lo que escribís no mueve al personaje ni dispara otras teclas
+        if (e.key === "Enter") {
+            e.preventDefault();
+            const t = campoChat.value.trim();
+            cerrarChat();
+            if (t) procesarFrase(t, true);
+        } else if (e.key === "Escape") { e.preventDefault(); cerrarChat(); }
     });
+    campoChat.addEventListener("keyup", function (e) { e.stopPropagation(); });
+    window.addEventListener("keydown", function (e) {
+        if ((e.code !== "Enter" && e.code !== "NumpadEnter") || e.repeat) return;
+        if (window.chatAbierto || window.juegoPausado || !sv.activo || !sv.vivo || inv.abierto) return;
+        const a = document.activeElement;
+        if (a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA")) return;
+        e.preventDefault();
+        abrirChat();
+    });
+    document.addEventListener("pointerlockchange", function () { if (!document.pointerLockElement) cerrarChat(); });    // Esc / pausa
+    botonTexto.addEventListener("click", function () { botonTexto.blur(); abrirChat(); });
 
     function actualizarVoz(dt) {
         const visible = !!sv.activo;
@@ -5421,6 +5625,9 @@ if (!gl) {
         if (!voz.activo) { if (botonVoz.textContent !== "🎤 Voz: off") botonVoz.textContent = "🎤 Voz: off"; return; }
         if (!sv.activo) { desactivarMicrofono(); return; }
 
+        if (!voz.medidor) {                        // celular: no se mide el volumen, siempre se habla "normal" (8 m, nunca gritando)
+            voz.radio = 8; voz.pico = 8; voz.nivel = 0.33; voz.vozT = 0;
+        } else {
         // volumen del cuadro (RMS en decibeles)
         voz.analizador.getFloatTimeDomainData(voz.buf);
         let suma = 0;
@@ -5431,14 +5638,30 @@ if (!gl) {
         if (voz.calib > 0) { voz.calib -= dt; voz.sueloDb += (db - voz.sueloDb) * Math.min(1, dt * 4); }
         else voz.sueloDb += (db - voz.sueloDb) * Math.min(1, dt * (db < voz.sueloDb ? 2 : 0.05));
 
-        // 0 = silencio, 1 = gritando (30 dB por encima del ruido de fondo)
-        const sobre = voz.calib > 0 ? 0 : db - Math.max(voz.sueloDb + 8, -55);
-        const objetivo = Math.max(0, Math.min(1, sobre / 30));
+        // El volumen se mide contra TU voz normal (cada micrófono y cada persona es distinta; antes hablar normal ya contaba como grito):
+        // hablar como siempre ≈ 8 m, susurrar ≈ 2 m y gritar (unos 9 dB más fuerte que de costumbre) ≈ 17 a 20 m
+        const piso = Math.max(voz.sueloDb + 8, -55);
+        voz.env = Math.max(db, voz.env - 8 * dt);                     // envolvente: sube enseguida, baja de a poco (entre sílabas no se hunde)
+        if (voz.calib <= 0 && voz.habla === null) voz.habla = Math.max(voz.sueloDb + 38, -40);     // al principio supone una voz fuerte: mejor no detectar un grito que inventarlo
+        const hayVoz = voz.calib <= 0 && voz.env > piso + 4;           // hay voz, no solo ruido de fondo
+        if (hayVoz) {
+            voz.vozT += dt;
+            // lo primero que decís (2 s de voz) define tu volumen "de siempre"; después se ajusta de a poco
+            // (rápido si hablás más bajo, despacio si hablás más fuerte: así un grito no se vuelve lo normal)
+            if (voz.vozT < 2) voz.habla += (voz.env - voz.habla) * Math.min(1, dt * 3);
+            else voz.habla += (Math.min(voz.env, voz.habla + 5) - voz.habla) * Math.min(1, dt * (voz.env < voz.habla ? 0.6 : 0.2));
+        }
+        const radioAhora = hayVoz ? Math.max(2, Math.min(20, 8 + (voz.env - voz.habla))) : 0;
+        const objetivo = radioAhora ? (radioAhora - 2) / 18 : 0;
         voz.nivel += (objetivo - voz.nivel) * Math.min(1, dt * (objetivo > voz.nivel ? 20 : 3));
         voz.radio = voz.nivel > 0.05 ? 2 + voz.nivel * 18 : 0;       // susurro ~2 m, hablar ~8 m, grito ~20 m
+        // un grito de verdad dura un rato: un golpe, un carraspeo o un portazo (decenas de ms) no cuentan, ni tampoco antes de conocer tu voz
+        voz.altoT = db > voz.habla + 7 ? voz.altoT + dt : Math.max(0, voz.altoT - dt * 0.5);
+        const radioVale = voz.radio >= 17 && (voz.altoT < 0.3 || voz.vozT < 3) ? 16.9 : voz.radio;
         // el reconocimiento de voz contesta un rato después de hablar: se acuerda del volumen más alto de los últimos 5 s
         const tAhora = performance.now();
-        if (voz.radio >= voz.pico || tAhora - voz.picoT > 5000) { voz.pico = voz.radio; voz.picoT = tAhora; }
+        if (radioVale >= voz.pico || tAhora - voz.picoT > 5000) { voz.pico = radioVale; voz.picoT = tAhora; }
+        }
 
         // qué NPCs te oyen
         const miCasa = casaDe(px, pz);
@@ -5457,7 +5680,8 @@ if (!gl) {
         if (voz.acumHud >= 0.1) {
             voz.acumHud = 0;
             const barras = Math.round(voz.nivel * 8);
-            botonVoz.textContent = voz.calib > 0 ? "🎤 calibrando…" :
+            if (!voz.medidor) botonVoz.textContent = "🎤 " + (voz.estado || "escuchando…") + " · te oyen: " + oyen;
+            else botonVoz.textContent = voz.calib > 0 ? "🎤 calibrando…" :
                 "🎤 " + "▮".repeat(barras) + "▯".repeat(8 - barras) + " " + voz.radio.toFixed(0) + " m · te oyen: " + oyen;
         }
     }
@@ -5724,6 +5948,7 @@ if (!gl) {
         for (const oid in otros) {
             if (oid === String(miId)) continue;
             const j = otros[oid];
+            if (!mismaZona(j)) continue;
             const dx = j.x - px, dz = j.z - pz;
             const d = Math.hypot(dx, dz);
             if (d > arma.alcance + 0.3) continue;
@@ -5898,6 +6123,169 @@ if (!gl) {
         gl.drawArrays(gl.TRIANGLES, 0, lista.length / 6);
     }
 
+    // ===== SALIR DE CASA =====
+    // Empezás adentro de tu casa (zona cerrada). De noche, desde las 12:00 AM, se habilita la puerta: ahí elegís
+    // en el mapa a dónde ir. Los lugares de la lista todavía no hacen nada (solo están los botones).
+    const DESTINOS = [
+        { id: "barrio", e: "🏘️", n: "Casas del barrio", d: "Las casas que ya están hechas", listo: true },
+        { id: "peligro", e: "⚠️", n: "Zona peligrosa" },
+        { id: "tranquilo", e: "🌳", n: "Barrios tranquilos" },
+        { id: "super", e: "🛒", n: "Supermercados" },
+        { id: "comercio", e: "💱", n: "Compra y venta" },
+        { id: "mas", e: "➕", n: "Más lugares" }
+    ];
+    let destinosAbierto = false;
+    let salidaPrev = null;
+
+    // Te lleva adentro de tu casa (al empezar y al reaparecer)
+    function irACasa() {
+        entrarZona("casa");
+        const c = casaPropia ? casaPropia.spawnDentro : SPAWN;
+        px = c.x; pz = c.z; yaw = c.yaw; pitch = 0; saltoY = 0; velY = 0;
+        pasoVentana = null; tareaVidrios = null;
+        salidaPrev = null;
+        destinosAbierto = false;
+        if (panelDestinos) panelDestinos.classList.remove("visible");
+    }
+
+    function salidaAbierta() {
+        const m = estacionesJuego.minDia;
+        return typeof m === "number" && m >= SALIDA_DESDE && m < SALIDA_HASTA;
+    }
+
+    const estiloDestinos = document.createElement("style");
+    estiloDestinos.textContent =
+        "#btnSalirCasa{position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:810;display:none;padding:.45em 1.1em;" +
+        "font-family:'Cinzel Decorative',serif;font-size:max(13px,1rem);letter-spacing:2px;color:#fff;background:rgba(60,0,0,.8);" +
+        "border:2px solid rgba(255,215,220,.8);border-radius:14px;cursor:pointer;text-shadow:0 0 8px #f00;box-shadow:0 0 14px rgba(255,0,0,.4);}" +
+        "#panelDestinos{position:fixed;inset:0;z-index:900;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.75);}" +
+        "#panelDestinos.visible{display:flex;}" +
+        "#panelDestinos .dCaja{width:min(94vw,540px);max-height:94vh;overflow:auto;box-sizing:border-box;padding:14px 16px;border-radius:18px;" +
+        "background:rgba(28,0,0,.95);border:2px solid rgba(255,215,220,.7);box-shadow:0 0 30px rgba(255,0,0,.4);color:#f1dede;text-align:center;" +
+        "font-family:'Cinzel Decorative',serif;}" +
+        "#panelDestinos h2{margin:0 0 4px;font-size:1.2rem;letter-spacing:3px;font-weight:normal;text-shadow:0 0 10px #f00;}" +
+        "#panelDestinos p{margin:0 0 10px;font-size:.8rem;opacity:.8;letter-spacing:1px;}" +
+        "#panelDestinos canvas{display:block;margin:0 auto;width:min(46vw,190px);height:min(46vw,190px);box-sizing:border-box;border:3px solid #7c7c7c;border-radius:8px;background:#3a3a3a;}" +
+        "#panelDestinos .dLey{margin:4px 0 10px;font-size:.75rem;letter-spacing:1px;color:#e8c9c9;}" +
+        "#panelDestinos .dGrid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;}" +
+        "#panelDestinos .dBtn{font-family:inherit;color:#fff;background:rgba(60,0,0,.65);border:2px solid rgba(255,215,220,.55);border-radius:12px;" +
+        "padding:.55em .4em;cursor:pointer;font-size:.9rem;line-height:1.2;}" +
+        "#panelDestinos .dBtn small{display:block;margin-top:2px;font-size:.62rem;opacity:.75;letter-spacing:1px;}" +
+        "#panelDestinos .dBtn.listo{border-color:#ffb347;box-shadow:0 0 12px rgba(255,160,60,.45);}" +
+        "#panelDestinos .dBtn.vacio{opacity:.6;cursor:default;}" +
+        "#panelDestinos .dQuedar{margin-top:10px;font-family:inherit;font-size:.85rem;letter-spacing:2px;color:#fff;background:transparent;" +
+        "border:2px solid rgba(255,215,220,.55);border-radius:12px;padding:.45em 1.2em;cursor:pointer;}";
+    document.head.appendChild(estiloDestinos);
+
+    const btnSalirCasa = document.createElement("button");
+    btnSalirCasa.id = "btnSalirCasa";
+    btnSalirCasa.type = "button";
+    btnSalirCasa.textContent = "🌙 Salir de casa";
+    document.body.appendChild(btnSalirCasa);
+
+    const panelDestinos = document.createElement("div");
+    panelDestinos.id = "panelDestinos";
+    panelDestinos.innerHTML =
+        '<div class="dCaja"><h2>🗺️ ¿A dónde vas?</h2>' +
+        '<p>Es de noche: ya podés salir. Elegí un lugar del mapa.</p>' +
+        '<canvas width="240" height="240"></canvas><div class="dLey">● Tu casa</div>' +
+        '<div class="dGrid"></div>' +
+        '<button type="button" class="dQuedar">Quedarme en casa</button></div>';
+    document.body.appendChild(panelDestinos);
+
+    const gridDestinos = panelDestinos.querySelector(".dGrid");
+    DESTINOS.forEach(function (d) {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "dBtn" + (d.listo ? " listo" : " vacio");
+        b.innerHTML = d.e + " " + d.n + "<small>" + (d.listo ? d.d : "Próximamente") + "</small>";
+        if (d.listo) b.addEventListener("click", function () { irADestino(d.id); });
+        gridDestinos.appendChild(b);         // los que no están listos quedan sin acción (por ahora)
+    });
+    panelDestinos.querySelector(".dQuedar").addEventListener("click", function () { cerrarDestinos(); });
+    panelDestinos.addEventListener("click", function (e) { if (e.target === panelDestinos) cerrarDestinos(); });
+    btnSalirCasa.addEventListener("click", function () { abrirDestinos(); });
+
+    // El mapa del menú: el barrio con tus casas en gris claro, calles grises y terrenos más oscuros; tu casa en rojo
+    function dibujarMapaDestinos() {
+        const cv = panelDestinos.querySelector("canvas"), g = cv.getContext("2d"), S = cv.width;
+        const k = S / (2 * MUNDO_MITAD);
+        const X = function (v) { return (v + MUNDO_MITAD) * k; };
+        const rect = function (r, col) { g.fillStyle = col; g.fillRect(X(r[0]), X(r[1]), (r[2] - r[0]) * k, (r[3] - r[1]) * k); };
+        g.fillStyle = "#3a3a3a"; g.fillRect(0, 0, S, S);
+        CALLES.forEach(function (r) { rect(r, "#777777"); });
+        CASAS.forEach(function (r) { rect(r, "#c4c4c4"); });
+        if (casaPropia) {
+            const r = casaPropia.rect;
+            g.beginPath();
+            g.arc(X((r[0] + r[2]) / 2), X((r[1] + r[3]) / 2), 6, 0, Math.PI * 2);
+            g.fillStyle = "#e02b2b"; g.fill();
+            g.lineWidth = 2; g.strokeStyle = "rgba(0,0,0,.6)"; g.stroke();
+        }
+    }
+
+    function abrirDestinos() {
+        if (destinosAbierto || zona !== "casa" || !sv.activo || !sv.vivo || window.juegoPausado) return;
+        if (!salidaAbierta()) {
+            avisar("La puerta está cerrada: solo se puede salir de noche, desde las 12:00 AM", 3200);
+            return;
+        }
+        if (inv.abierto) cerrarInventario();
+        destinosAbierto = true;
+        window.inventarioAbierto = true;          // para que el menú no abra la pausa al soltar el mouse
+        if (sv.durmiendo) despertar();
+        if (window.soltarControles) window.soltarControles();
+        try { document.exitPointerLock(); } catch (e) {}
+        dibujarMapaDestinos();
+        panelDestinos.classList.add("visible");
+    }
+    function cerrarDestinos() {
+        if (!destinosAbierto) return;
+        destinosAbierto = false;
+        window.inventarioAbierto = !!inv.abierto;
+        panelDestinos.classList.remove("visible");
+        if (!("ontouchstart" in window) && !inv.abierto) { try { canvas.requestPointerLock(); } catch (e) {} }
+    }
+    function irADestino(id) {
+        if (id !== "barrio") return;              // los demás lugares todavía no existen
+        cerrarDestinos();
+        entrarZona("barrio");
+        const f = casaPropia.spawnFuera;
+        px = f.x; pz = f.z; yaw = f.yaw; pitch = 0; saltoY = 0; velY = 0;
+        pasoVentana = null; tareaVidrios = null;
+        salidaPrev = null;
+        btnSalirCasa.style.display = "none";
+        avisar("Saliste de tu casa", 2500);
+    }
+
+    // Esc / botón "atrás": primero cierra el menú de destinos
+    (function () {
+        const cerrarInv = window.cerrarInventario;
+        window.cerrarInventario = function () {
+            if (destinosAbierto) { cerrarDestinos(); return; }
+            cerrarInv();
+        };
+    })();
+
+    // Se llama en cada cuadro desde el reloj
+    function actualizarSalidaCasa() {
+        const abierta = zona === "casa" && salidaAbierta();
+        if (destinosAbierto && !abierta) cerrarDestinos();       // amaneció con el menú abierto
+        const ver = abierta && !destinosAbierto && !inv.abierto && sv.vivo && !window.juegoPausado;
+        const disp = ver ? "block" : "none";
+        if (btnSalirCasa.style.display !== disp) btnSalirCasa.style.display = disp;
+        if (zona === "casa") {
+            if (salidaPrev === null) {
+                avisar(abierta ? "Es de noche: podés salir por la puerta de tu casa" : "Estás en tu casa. De noche, desde las 12:00 AM, podés salir", 5000);
+            } else if (abierta !== salidaPrev) {
+                avisar(abierta ? "🌙 Es medianoche: ya podés salir por la puerta" : "Amaneció: la puerta se cerró hasta la próxima noche", 6000);
+            }
+            salidaPrev = abierta;
+        } else {
+            salidaPrev = null;
+        }
+    }
+
     // ===== BUCLE DEL JUEGO =====
     let anterior = performance.now();
 
@@ -5980,7 +6368,7 @@ if (!gl) {
 
         // Dormir: si te movés te despertás; dormido o muerto no te movés
         if (sv.durmiendo && (adelante !== 0 || lado !== 0)) despertar();
-        if (sv.durmiendo || !sv.vivo) { adelante = 0; lado = 0; }
+        if (sv.durmiendo || !sv.vivo || destinosAbierto) { adelante = 0; lado = 0; }
 
         // Piernas, postura y velocidad
         const lesion = sv.piernas[0].n + sv.piernas[1].n;                     // 0 a 4

@@ -1,6 +1,6 @@
 // estaciones.js - Sistema de estaciones de Rainster
 // Sirve para el navegador (<script src="estaciones.js">) y para Node (require).
-// Año = 100 días, estación = 25 días, 1 día = 1 hora.
+// Año = 100 días, estación = 25 días, 1 día = 20 minutos.
 // Ciclo: otoño -> invierno -> primavera -> verano -> otoño...
 
 (function (root, factory) {
@@ -12,7 +12,7 @@
 })(typeof self !== 'undefined' ? self : this, function () {
   const DIAS_POR_ESTACION = 25;
   const DIAS_POR_ANIO = 100;
-  const MS_POR_DIA = 60 * 60 * 1000; // 1 hora
+  const MS_POR_DIA = 20 * 60 * 1000; // 20 minutos
 
   // modificadores = multiplicadores (1 = normal).
   // Hoy el juego usa: velocidad, luz y lluvia. Los demás (cultivos, recursos,
@@ -152,7 +152,7 @@
     const info = document.createElement('div');
     info.className = 'partidaInfo';
     info.style.marginTop = '0.6rem';
-    info.textContent = 'El año tiene 100 días: cada estación dura 25 días y 1 día dura 1 hora.';
+    info.textContent = 'El año tiene 100 días: cada estación dura 25 días y 1 día dura 20 minutos.';
 
     panel.append(etiqueta, fila, descripcion, info);
     contenedor.append(boton, panel);

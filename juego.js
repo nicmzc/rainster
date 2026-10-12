@@ -163,11 +163,7 @@ if (!gl) {
         // Suelo
         caja(-M, -0.1, -M, M, 0, M, [0.25, 0.26, 0.28], false);
 
-        // Muro de afuera: que no te dejen salir del mapa
-        caja(-M - 1, 0, -M - 1, M + 1, 3, -M, ESCOMBRO, true);
-        caja(-M - 1, 0, M, M + 1, 3, M + 1, ESCOMBRO, true);
-        caja(-M - 1, 0, -M, -M, 3, M, ESCOMBRO, true);
-        caja(M, 0, -M, M + 1, 3, M, ESCOMBRO, true);
+        // Sin muro de afuera: si te salís del mapa, el juego te manda de vuelta a tu casa (ver revisarLimites)
 
         // ----- Calles: 1 o 2 en cada dirección, en lugares y con anchos al azar -----
         function centrosCalles(n) {
@@ -585,6 +581,7 @@ if (!gl) {
         });
         PUERTAS.concat(VENTANAS).forEach(function (o) {
             o.ini = { a: false, t: !!o.trabada };
+            o.bloqIni = !!o.bloqueada;          // para volver a clavar los tablones al reiniciar
             o.ang = 0;
             fijarAbertura(o, false, o.trabada);
         });
@@ -647,12 +644,7 @@ if (!gl) {
         }
         const px1 = r[0] - PATIO, pz1 = r[1] - PATIO, px2 = r[2] + PATIO, pz2 = r[3] + PATIO;
         caja(px1, -0.1, pz1, px2, 0, pz2, [0.25, 0.26, 0.28], false, out);       // suelo del patio
-        const cols = [];
-        const esp = 0.8, alto = 4.5;
-        [[px1 - esp, pz1 - esp, px2 + esp, pz1], [px1 - esp, pz2, px2 + esp, pz2 + esp], [px1 - esp, pz1, px1, pz2], [px2, pz1, px2 + esp, pz2]].forEach(function (w) {
-            caja(w[0], 0, w[1], w[2], alto, w[3], ESCOMBRO, false, out);        // muro que cierra la zona
-            cols.push([w[0], w[1], w[2], w[3], alto, 0]);
-        });
+        const cols = [];            // sin muro alrededor del patio: si te alejás de la casa, te devuelve adentro (ver revisarLimites)
         const colsNpc = new Set(COMPLETO.NPCS.map(function (n) { return n.col; }));
         COMPLETO.colisiones.forEach(function (c) {
             if (colsNpc.has(c)) return;
@@ -1241,7 +1233,7 @@ if (!gl) {
     function enviarRed(o) {
         if (conexion && conexion.readyState === WebSocket.OPEN) { try { conexion.send(JSON.stringify(o)); } catch (e) {} }
     }
-    function esAutoridad() { return !conexion || soyAutoridad; }
+    function esAutoridad() { return !conexion || soyAutoridad || enLugar(); }
 
     window.desconectarServidor = function () {
         if (conexion) {
@@ -1318,7 +1310,7 @@ if (!gl) {
                     if (window.alPausaRemota) window.alPausaRemota(mensaje.pausado, mensaje.host);
                 }
                 if (mensaje.tipo === "jugadores") otros = mensaje.jugadores;
-                if (mensaje.tipo === "abertura") aplicarEstados({ [mensaje.k]: [mensaje.a, mensaje.t] }, false, true);
+                if (mensaje.tipo === "abertura") aplicarEstados({ [mensaje.k]: [mensaje.a, mensaje.t, mensaje.b] }, false, true);
                 if (mensaje.tipo === "golpe") recibirGolpe(mensaje.dano, mensaje.nombre);
                 if (mensaje.tipo === "soltar") redItemPuesto(mensaje);
                 if (mensaje.tipo === "recoger") redItemSacado(mensaje.k);
@@ -1326,7 +1318,7 @@ if (!gl) {
                 if (mensaje.tipo === "autoridad") tomarMandoNpcs();
                 if (mensaje.tipo === "npcgolpe" && esAutoridad()) { const nn = NPCS[mensaje.i]; if (nn) golpearNpc(nn, mensaje.dano, String(mensaje.de)); }
                 if (mensaje.tipo === "robo" && esAutoridad()) robarNpcs(String(mensaje.de), mensaje.x, mensaje.z);
-                if (mensaje.tipo === "npchabla") mostrarHablaNpc(mensaje.i, mensaje.t);
+                if (mensaje.tipo === "npchabla" && !enLugar()) mostrarHablaNpc(mensaje.i, mensaje.t);
                 if (mensaje.tipo === "vozdice" && esAutoridad()) reaccionarVoz(String(mensaje.de), mensaje.x, mensaje.z, mensaje.intent, mensaje.r, !!mensaje.g, String(mensaje.t || "").slice(0, 140));
                 if (mensaje.tipo === "cerrado") {
                     cerradoPorHost = true;
@@ -2773,7 +2765,7 @@ if (!gl) {
         if (!it) return false;
         const iL = itemsLugar.indexOf(it);
         if (iL >= 0) {                  // estante de un lugar seguro: se lleva sin avisarle a nadie
-            if (agregarItem(it.id)) { itemsLugar.splice(iL, 1); avisar("Recogiste: " + ITEMS[it.id].n, 2000); }
+            if (agregarItem(it.id)) { itemsLugar.splice(iL, 1); avisar("Recogiste: " + ITEMS[it.id].n, 2000); alertarRobo(); }
             else avisar("No tenés lugar", 2000);
             return true;
         }
@@ -2833,7 +2825,7 @@ if (!gl) {
         } else {
             if (tareaVidrios && tareaVidrios.o === o) t = "sacando vidrios… " + Math.round(tareaVidrios.t / TIEMPO_VIDRIOS * 100) + "%";
             else if (o.rota) { if (o.abierta) return null; t = "sacar vidrios (3 s)"; }      // rota sin vidrios: no hay nada que hacer acá
-            else if (o.bloqueada) t = "ventana bloqueada";
+            else if (o.bloqueada) t = itemMano() === "hacha" ? "ventana bloqueada: rompé los tablones con el hacha" : "ventana bloqueada";
             else t = o.abierta ? "cerrar ventana" : "abrir ventana";
         }
         return tactil ? mayuscula(t) : "E: " + t;
@@ -2867,7 +2859,7 @@ if (!gl) {
 
     function enviarAbertura(o) {
         if (conexion && conexion.readyState === WebSocket.OPEN) {
-            conexion.send(JSON.stringify({ tipo: "abertura", k: o.k, a: o.abierta ? 1 : 0, t: (o.esPuerta ? o.trabada : o.rota) ? 1 : 0 }));
+            conexion.send(JSON.stringify({ tipo: "abertura", k: o.k, a: o.abierta ? 1 : 0, t: (o.esPuerta ? o.trabada : o.rota) ? 1 : 0, b: tablonesRotos(o) ? 1 : 0 }));
         }
     }
 
@@ -2927,6 +2919,34 @@ if (!gl) {
     const TIEMPO_VIDRIOS = 3;        // segundos que lleva sacar los vidrios rotos
     let pasoVentana = null;          // cruce en curso: { o, t, dur, rapido, x0, z0, y0, w0, w1 }
     let tareaVidrios = null;         // sacando vidrios: { o, t }
+
+    // ----- Madera: los tablones de las ventanas bloqueadas y las puertas con llave se rompen a hachazos -----
+    const GOLPES_TABLONES = 3, GOLPES_PUERTA = 6;
+    function tablonesRotos(o) { return !o.esPuerta && !!o.bloqIni && !o.bloqueada; }
+    // La ventana bloqueada o puerta con llave que tenés adelante y al alcance (o null)
+    function maderaApuntada(alcance) {
+        const fx = -Math.sin(yaw), fz = -Math.cos(yaw);
+        let mejor = null, mejorD = 1e9;
+        for (const o of PUERTAS.concat(VENTANAS)) {
+            if (o.esPuerta ? (!o.trabada || zona === "casa") : !o.bloqueada) continue;
+            const dx = o.centro[0] - px, dz = o.centro[1] - pz;
+            const d = Math.hypot(dx, dz);
+            if (d > Math.max(1.9, alcance + 0.4) || d >= mejorD) continue;
+            if (d > 0.6 && (dx * fx + dz * fz) / d < 0.7) continue;
+            if (!o.esPuerta && (saltoY > o.y2 || saltoY < o.y1 - 2.2)) continue;
+            mejor = o; mejorD = d;
+        }
+        return mejor;
+    }
+    function golpearMadera(o) {
+        o.maderaHP = (o.maderaHP > 0 ? o.maderaHP : (o.esPuerta ? GOLPES_PUERTA : GOLPES_TABLONES)) - 1;
+        ruidoPulso = Math.max(ruidoPulso, 26);                  // los hachazos se oyen lejos
+        if (o.maderaHP > 0) { avisar(o.esPuerta ? "La puerta cruje..." : "Los tablones crujen...", 900); return; }
+        o.maderaHP = 0;
+        if (o.esPuerta) { fijarAbertura(o, true, false); avisar("Rompiste la puerta a hachazos", 3000); }
+        else { o.bloqueada = false; avisar("Rompiste los tablones: ahora la ventana se puede abrir o romper", 3500); }
+        enviarAbertura(o);
+    }
 
     // Algo en la mano para romper el vidrio sin lastimarte (palo, cuchillo, hacha, muletas)
     function objetoParaRomper() {
@@ -3047,7 +3067,7 @@ if (!gl) {
     // Estados: para guardar la partida, para el servidor y para reiniciar
     function estadoAberturas() {
         const e = {};
-        todasAberturas().forEach(function (o) { e[o.k] = [o.abierta ? 1 : 0, (o.esPuerta ? o.trabada : o.rota) ? 1 : 0]; });
+        todasAberturas().forEach(function (o) { e[o.k] = [o.abierta ? 1 : 0, (o.esPuerta ? o.trabada : o.rota) ? 1 : 0, tablonesRotos(o) ? 1 : 0]; });
         return e;
     }
     function aplicarEstados(e, instantaneo, remoto) {
@@ -3055,6 +3075,7 @@ if (!gl) {
         todasAberturas().forEach(function (o) {
             const v = e[o.k];
             if (!Array.isArray(v)) return;
+            if (!o.esPuerta && o.bloqIni && +v[2]) o.bloqueada = false;      // le habían roto los tablones
             if (!o.esPuerta && o.bloqueada) return;                 // una ventana bloqueada nunca se abre
             const abre = !!+v[0];
             if (!abre && remoto) sacarmeDe(o);
@@ -3066,6 +3087,8 @@ if (!gl) {
         todasAberturas().forEach(function (o) {
             fijarAbertura(o, o.ini.a, o.ini.t);
             o.ang = o.ini.a ? 1 : 0;
+            if (!o.esPuerta) o.bloqueada = !!o.bloqIni;
+            o.maderaHP = 0;
         });
     }
     function actualizarAberturas(dt) {
@@ -4235,6 +4258,7 @@ if (!gl) {
     // Todos los jugadores que los NPCs pueden ver: vos y los demás del servidor
     function listaJugadores() {
         const l = [{ id: idPropio(), x: px, z: pz, y: saltoY, yo: true, vivo: sv.vivo }];
+        if (enLugar()) return l;         // en un lugar cerrado los NPCs son de cada jugador
         for (const id in otros) {
             if (id === String(miId)) continue;
             const j = otros[id];
@@ -4254,7 +4278,7 @@ if (!gl) {
         if (!forzar && (ahoraMs - n.habloMs < 4500 || ahoraMs - ultimoHablaNpc < 2200)) return false;
         n.habloMs = ahoraMs; ultimoHablaNpc = ahoraMs;
         mostrarHablaNpc(n.i, texto);
-        enviarRed({ tipo: "npchabla", i: n.i, t: texto });
+        if (!enLugar()) enviarRed({ tipo: "npchabla", i: n.i, t: texto });
         return true;
     }
     function elegirTexto(l) { return l[Math.floor(Math.random() * l.length)]; }
@@ -4357,7 +4381,7 @@ if (!gl) {
     }
 
     function actualizarNpcs(dt) {
-        if (snapHola && NPCS.length) { aplicarFotoNpcs(snapHola, true); snapHola = null; }
+        if (snapHola && NPCS.length && !enLugar()) { aplicarFotoNpcs(snapHola, true); snapHola = null; }
         if (!esAutoridad()) { actualizarNpcsRemotos(dt); return; }
         const jugs = listaJugadores();
         const ahoraMs = performance.now();
@@ -4517,7 +4541,7 @@ if (!gl) {
         }
 
         // en un servidor, les manda a los demás dónde están los NPCs (10 veces por segundo)
-        if (conexion) {
+        if (conexion && !enLugar()) {
             acumFotoNpc += dt;
             if (acumFotoNpc >= 0.1) { acumFotoNpc = 0; enviarRed({ tipo: "npcs", n: fotoNpcs() }); }
         }
@@ -6005,6 +6029,13 @@ if (!gl) {
         } else if (mejor === null) {                      // si no le pegás a nadie, y apuntás a una ventana cerrada, la rompés
             const v = ventanaApuntada(arma.alcance);
             if (v) romperVentana(v);
+            else {
+                const m = maderaApuntada(arma.alcance);
+                if (m) {
+                    if (id === "hacha") golpearMadera(m);
+                    else avisar(m.esPuerta ? "La puerta aguanta: solo con un hacha (o la llave)" : "Los tablones aguantan: necesitás un hacha", 1800);
+                }
+            }
         }
         if (mejor !== null && conexion && conexion.readyState === WebSocket.OPEN) {
             conexion.send(JSON.stringify({ tipo: "golpe", a: Number(mejor), arma: conArma ? id : "puno", f: Math.max(0.3, Math.min(1, sv.fuerza)) }));
@@ -6160,7 +6191,7 @@ if (!gl) {
         { id: "barrio", e: "⚔️", n: "Zona de guerra", d: "Las casas del barrio: acá todo es peligroso", listo: true },
         { id: "peligro", e: "⚠️", n: "Zona peligrosa" },
         { id: "tranquilo", e: "🌳", n: "Barrios tranquilos" },
-        { id: "super", e: "🛒", n: "Supermercado", d: "Saqueá todo lo que quieras, sin problemas", listo: true },
+        { id: "super", e: "🛒", n: "Supermercado", d: "Hay mucho para saquear, pero también gente que lo defiende", listo: true },
         { id: "comercio", e: "💱", n: "Compra y venta", d: "Vendé lo que juntaste y comprá lo que te falta", listo: true },
         { id: "mas", e: "➕", n: "Más lugares" }
     ];
@@ -6280,7 +6311,7 @@ if (!gl) {
             entrarZona(id);
             salidaPrev = null;
             btnSalirCasa.style.display = "none";
-            avisar(id === "super" ? "🛒 Supermercado: llevate lo que quieras, nadie te va a decir nada" : "💱 Compra y venta: hablale al vendedor", 3500);
+            avisar(id === "super" ? "🛒 Supermercado: hay mucho para saquear, pero también hay gente adentro" : "💱 Compra y venta: el vendedor te atiende, pero cuidado con la gente del lugar", 4000);
             return;
         }
         if (id !== "barrio") return;              // los demás lugares todavía no existen
@@ -6305,8 +6336,8 @@ if (!gl) {
 
     // ===== LUGARES SEGUROS: SUPERMERCADO Y COMPRA Y VENTA =====
     // Dos zonas cerradas como tu casa (cargan solo su propio edificio). Se llega desde el mapa de la puerta y se vuelve a tu casa.
-    // - Supermercado: estantes con comida, agua, remedios y ropa. Podés llevarte todo sin que nadie reaccione (no hay NPCs ni alarma de robo).
-    //   Se vuelve a surtir cada 10 minutos (por jugador: el stock no se comparte en un servidor).
+    // - Supermercado: estantes con comida, agua, remedios y ropa. Es zona de guerra como todo lo demás: hay NPCs adentro y llevarte algo cuenta como robo.
+    //   Se vuelve a surtir (y reaparece la gente) cada 10 minutos. Los NPCs de estos lugares son de cada jugador: no se comparten por la red.
     // - Compra y venta: un vendedor te compra tus cosas (te da plata) y te vende otras.
     // Cada edificio está lejos del barrio (en otras coordenadas) para no mezclarse con sus objetos.
     const LUGAR_BASE = { super: [200, 0], comercio: [260, 0] };
@@ -6379,8 +6410,77 @@ if (!gl) {
             B(cx + 6.5, 0, cz + 1.0, cx + 7.5, 1.0, cz + 3.5, MADERA, true);
             L.mostrador = [cx, cz - 1.0];
         }
+        // muebles en coordenadas del lugar (relativas a su centro) para que los NPCs los esquiven
+        if (id === "super") {
+            L.locales = [[-9.5, -6.0, 5.5, -5.0], [-9.5, -2.5, 5.5, -1.5], [-9.5, 1.0, 5.5, 2.0], [7.0, 3.5, 10.0, 5.0]];
+        } else {
+            L.locales = [[-3.5, -4.6, 3.5, -1.7], [-6.5, -5.2, -3.5, -4.0], [3.5, -5.2, 6.5, -4.0], [-7.5, 1.0, -6.5, 3.5], [6.5, 1.0, 7.5, 3.5]];
+        }
+        L.npcs = [];
         LUGARES[id] = L;
         return L;
+    }
+
+    // ----- Gente de los lugares: la misma IA que en las casas (agresivo, defensor, cobarde, pacífico) -----
+    function crearNpcsLugar(L, cantidad) {
+        const cx = L.cx, cz = L.cz, w = (L.rect[2] - L.rect[0]) / 2, d = (L.rect[3] - L.rect[1]) / 2, t = 0.3;
+        const locales = L.locales;
+        const libre = function (lx, lz) {
+            if (lx < -w + t + 0.55 || lx > w - t - 0.55 || lz < -d + t + 0.55 || lz > d - t - 0.55) return false;
+            return !locales.some(function (m) { return lx > m[0] - 0.45 && lx < m[2] + 0.45 && lz > m[1] - 0.45 && lz < m[3] + 0.45; });
+        };
+        const camino = function (ax, az, bx, bz) {
+            const n = Math.max(2, Math.ceil(Math.hypot(bx - ax, bz - az) / 0.25));
+            for (let i = 1; i <= n; i++) if (!libre(ax + (bx - ax) * i / n, az + (bz - az) * i / n)) return false;
+            return true;
+        };
+        const T = function (x, z) { return [cx + x, cz + z]; };
+        const pieles = [[0.85, 0.65, 0.50], [0.70, 0.50, 0.36], [0.55, 0.38, 0.27], [0.92, 0.76, 0.62], [0.45, 0.30, 0.22]];
+        const lista = [];
+        for (let i = 0; i < cantidad; i++) {
+            for (let k = 0; k < 80; k++) {
+                const lx = -w + t + 0.6 + Math.random() * (2 * w - 2 * t - 1.2), lz = -d + t + 0.6 + Math.random() * (2 * d - 2 * t - 1.2);
+                if (!libre(lx, lz)) continue;
+                if (Math.hypot(lx - L.spawn.x + cx, lz - L.spawn.z + cz) < 7) continue;       // no justo en la entrada
+                if (lista.some(function (o) { return Math.hypot(o.lx - lx, o.lz - lz) < 2; })) continue;
+                const eq = {};
+                if (Math.random() < 0.8) eq.torso = "camisa";
+                if (Math.random() < 0.7) eq.piernas = "pantalon";
+                if (Math.random() < 0.4) eq.cabeza = "gorra";
+                if (Math.random() < 0.5) eq.pies = "botas";
+                const wp = T(lx, lz);
+                const rt = Math.random();
+                const tipo = rt < 0.35 ? "agresivo" : rt < 0.60 ? "defensor" : rt < 0.80 ? "cobarde" : "pacifico";
+                lista.push({
+                    tipo: tipo, hp: { agresivo: 45, defensor: 40, cobarde: 25, pacifico: 30 }[tipo],
+                    i: lista.length, oyeVoz: false, distVoz: 0, calmaPor: {}, asustadoPor: {}, confPor: {}, dio: false, golpeSeq: 0, ofendidoPor: {}, golpeadoPor: {}, caido: false, blanco: null,
+                    alerta: 0, cd: 0, pendiente: 0, golpeT: 99, habloMs: -1e9, vel: 0, giroHuida: 0,
+                    aLocal: function (wx, wz) { return [wx - cx, wz - cz]; },
+                    libreMov: function (qx, qz) {
+                        if (qx < -w + t + 0.4 || qx > w - t - 0.4 || qz < -d + t + 0.4 || qz > d - t - 0.4) return false;
+                        return !locales.some(function (m) { return qx > m[0] - 0.4 && qx < m[2] + 0.4 && qz > m[1] - 0.4 && qz < m[3] + 0.4; });
+                    },
+                    casa: -1, T: T, libre: libre, camino: camino, w: w, d: d, t: t,
+                    lx: lx, lz: lz, x: wp[0], z: wp[1], tx: lx, tz: lz,
+                    estado: "para", espera: 0.5 + Math.random() * 4.5,
+                    cuerpo: Math.random() * 6.283, giroCab: 0, fase: Math.random() * 6, mov: 0,
+                    base: pieles[Math.floor(Math.random() * pieles.length)], eq: eq,
+                    col: [wp[0] - 0.3, wp[1] - 0.3, wp[0] + 0.3, wp[1] + 0.3, 1.8, 0]
+                });
+                break;
+            }
+        }
+        L.npcs = lista;
+        L.npcsT = Date.now();
+    }
+    // Para que "estar adentro" (y el aviso de robo) funcione igual que en una casa, el edificio se anota entre las casas
+    function anotarCasaLugar(L) {
+        if (L.casaIdx === undefined || CASAS[L.casaIdx] !== L.rectCasa) {
+            L.rectCasa = L.rect.slice();
+            CASAS.push(L.rectCasa);
+            L.casaIdx = CASAS.length - 1;
+        }
+        (L.npcs || []).forEach(function (n) { n.casa = L.casaIdx; });
     }
 
     // Llena los estantes del supermercado
@@ -6406,8 +6506,12 @@ if (!gl) {
         zona = id;
         colisiones.length = 0;
         L.cols.forEach(function (c) { colisiones.push(c); });
-        PUERTAS = []; VENTANAS = []; NPCS = [];
+        PUERTAS = []; VENTANAS = [];
         cargarBuffer(L.datos);
+        if (!L.npcsT || Date.now() - L.npcsT > SURTIDO_MS) crearNpcsLugar(L, id === "super" ? 4 : 2);
+        anotarCasaLugar(L);
+        NPCS = L.npcs;
+        L.npcs.forEach(function (n) { colisiones.push(n.col); });
         if (id === "super") {
             if (!L.surtidoT || Date.now() - L.surtidoT > SURTIDO_MS) surtirSuper(L);
             itemsLugar = L.items;
@@ -6537,8 +6641,28 @@ if (!gl) {
         };
     })();
 
+    // Los mapas no tienen muros: si te salís del mapa, volvés a tu casa
+    function revisarLimites() {
+        if (!sv.activo || !sv.vivo || pasoVentana) return;
+        let fuera = false;
+        if (zona === "barrio") {
+            fuera = Math.abs(px) > MUNDO_MITAD || Math.abs(pz) > MUNDO_MITAD;
+        } else if (zona === "casa" && casaPropia) {
+            const r = casaPropia.rect, m = PATIO + 1;
+            fuera = px < r[0] - m || px > r[2] + m || pz < r[1] - m || pz > r[3] + m;
+        } else if (enLugar() && LUGARES[zona]) {
+            const r = LUGARES[zona].rect;
+            fuera = px < r[0] - 1 || px > r[2] + 1 || pz < r[1] - 1 || pz > r[3] + 1;
+        }
+        if (!fuera) return;
+        if (tiendaAbierta) cerrarTienda();
+        irACasa();
+        avisar("Te saliste del mapa: volviste a tu casa", 3500);
+    }
+
     // Se llama en cada cuadro desde el reloj
     function actualizarSalidaCasa() {
+        revisarLimites();
         const abierta = zona === "casa" && salidaAbierta();
         if (destinosAbierto && !abierta) cerrarDestinos();       // amaneció con el menú abierto
         const ver = abierta && !destinosAbierto && !inv.abierto && sv.vivo && !window.juegoPausado;

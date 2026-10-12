@@ -274,10 +274,10 @@ wss.on("connection", function (socket, req) {
             if (datos.tipo === "abertura") {
                 // alguien abrió o cerró una puerta/ventana: se guarda (para los que entren después) y se avisa a los demás
                 if (typeof datos.k !== "string" || !/^[pv]\d{1,3}(_\d{1,2})?$/.test(datos.k)) return;
-                const a = datos.a ? 1 : 0, t = datos.t ? 1 : 0;
+                const a = datos.a ? 1 : 0, t = datos.t ? 1 : 0, b = datos.b ? 1 : 0;      // b = a la ventana le rompieron los tablones
                 if (Object.keys(sala.aberturas).length > 600 && !sala.aberturas[datos.k]) return;
-                sala.aberturas[datos.k] = [a, t];
-                const aviso = JSON.stringify({ tipo: "abertura", k: datos.k, a: a, t: t });
+                sala.aberturas[datos.k] = [a, t, b];
+                const aviso = JSON.stringify({ tipo: "abertura", k: datos.k, a: a, t: t, b: b });
                 for (const otro of sala.sockets) {
                     if (otro !== socket && otro.readyState === WebSocket.OPEN) otro.send(aviso);
                 }

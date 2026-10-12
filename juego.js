@@ -114,6 +114,9 @@ if (!gl) {
     let MUNDO_INICIAL = [];                 // objetos sueltos { id, x, y, z }
     let SPAWN = { x: 0, z: 9, yaw: 0 };
     let semillaMundo = null;
+    let itemsLugar = [];                    // objetos de los estantes del lugar seguro donde estás (no se guardan)
+    let dinero = 0;                         // plata del jugador (se guarda con la partida)
+    let tiendaAbierta = false;              // el panel de compra y venta está abierto
     let zona = "barrio";                    // dónde estás: "casa" (zona cerrada, no carga nada más) o "barrio" (las casas ya hechas)
     let COMPLETO = null;                    // el barrio entero, guardado mientras estás adentro de tu casa
     let casaPropia = null;                  // { idx, rect, spawnFuera, spawnDentro }
@@ -477,7 +480,7 @@ if (!gl) {
             const objetivo = ent(1, 2);
             let puestas = 0;
             for (let intento = 0; intento < 25 && puestas < objetivo; intento++) {
-                const W = rnd(8, 13), D = rnd(8, 12);
+                const W = rnd(9.5, 14.5), D = rnd(9.5, 13.5);
                 const lados = [];
                 if (mz.calle.zM) lados.push(0);       // mira a +z
                 if (mz.calle.zm) lados.push(1);       // mira a -z
@@ -498,7 +501,7 @@ if (!gl) {
         // por si ninguna entró (no debería pasar): una casa en el centro de la manzana más grande
         if (casas.length === 0) {
             const g = manzanas.slice().sort(function (a, b) { return (b.r[2] - b.r[0]) * (b.r[3] - b.r[1]) - (a.r[2] - a.r[0]) * (a.r[3] - a.r[1]); })[0];
-            construirCasa(9, 9, (g.r[0] + g.r[2]) / 2, (g.r[1] + g.r[3]) / 2, g.calle.zM ? 0 : g.calle.zm ? 1 : g.calle.xM ? 2 : 3);
+            construirCasa(11, 11, (g.r[0] + g.r[2]) / 2, (g.r[1] + g.r[3]) / 2, g.calle.zM ? 0 : g.calle.zm ? 1 : g.calle.xM ? 2 : 3);
         }
 
         // Cajas y escombros sueltos afuera
@@ -611,11 +614,8 @@ if (!gl) {
     }
 
     // ===== ZONAS =====
-    // Arrancás adentro de tu casa: una zona cerrada y no carga nada más. De noche, desde las 12:00 AM,
-    // podés salir por la puerta y elegir a dónde ir (ver "SALIR DE CASA"). Por ahora el único lugar que se puede
+    // Arrancás adentro de tu casa: una zona cerrada y no carga nada más. Podés salir por la puerta cuando quieras y elegir a dónde ir (ver "SALIR DE CASA"). Por ahora el único lugar que se puede
     // elegir son las casas que ya están hechas (el "barrio"); los demás lugares están los botones pero vacíos.
-    const SALIDA_DESDE = 0;            // minuto del día en que se abre la salida: 0 = 12:00 AM (medianoche)
-    const SALIDA_HASTA = 7 * 60;       // ...y se cierra a las 7:00 AM
     const PATIO = 1.8;                 // el terreno cerrado que rodea la casa
 
     // Un punto libre adentro de la casa (sin tocar el azar del mapa, para que el mapa salga igual que siempre)
@@ -675,6 +675,8 @@ if (!gl) {
     // Cambia lo que está cargado: "casa" (solo tu casa) o "barrio" (todo)
     function entrarZona(z) {
         if (!COMPLETO || !casaPropia) return;
+        if (z === "super" || z === "comercio") { entrarLugar(z); return; }
+        itemsLugar = [];
         zona = z;
         colisiones.length = 0;
         if (z === "casa") {
@@ -697,7 +699,7 @@ if (!gl) {
         return !!r && x > r[0] - PATIO - 0.5 && x < r[2] + PATIO + 0.5 && z > r[1] - PATIO - 0.5 && z < r[3] + PATIO + 0.5;
     }
     // Solo se ven y se tocan entre sí los jugadores que están en la misma zona
-    function mismaZona(j) { return ((j && j.zn) | 0) === (zona === "casa" ? 1 : 0); }
+    function mismaZona(j) { return ((j && j.zn) | 0) === codigoZona(); }
 
     construirMundo(1);
 
@@ -1358,7 +1360,7 @@ if (!gl) {
                 q: [inv.equipo.cabeza, inv.equipo.torso, inv.equipo.piernas, inv.equipo.pies, inv.equipo.espalda].map(function (x) { return x || ""; }).join(","),
                 ad: accATexto(inv.acc),
                 ba: baile ? baile.id : "",
-                zn: zona === "casa" ? 1 : 0,
+                zn: codigoZona(),
                 pl: sv.piernas[0].n * 3 + sv.piernas[1].n,
                 am: Math.round(animMov * 100) / 100, ac: animCorre ? 1 : 0
             }));
@@ -1763,6 +1765,8 @@ if (!gl) {
             const r = casaPropia.rect;
             rectMapa([r[0] - PATIO, r[1] - PATIO, r[2] + PATIO, r[3] + PATIO], "#3a3a3a");   // terreno
             rectMapa(r, "#c4c4c4");                                          // casa
+        } else if ((zona === "super" || zona === "comercio") && LUGARES[zona]) {
+            rectMapa(LUGARES[zona].rect, "#c4c4c4");                         // el edificio
         } else {
             rectMapa([-MUNDO_MITAD, -MUNDO_MITAD, MUNDO_MITAD, MUNDO_MITAD], "#3a3a3a"); // terrenos
             for (const calle of CALLES) rectMapa(calle, "#777777");         // calles
@@ -2755,12 +2759,24 @@ if (!gl) {
             const dy = it.y - saltoY;
             if (d < mejorD && dy > -1.2 && dy < 1.7) { mejor = it; mejorD = d; }
         }
+        for (const it of itemsLugar) {
+            const d = Math.hypot(it.x - px, it.z - pz);
+            const dy = it.y - saltoY;
+            if (d < mejorD && dy > -1.2 && dy < 1.7) { mejor = it; mejorD = d; }
+        }
         return mejor;
     }
     // Devuelve true si había un objeto cerca (aunque no hayas tenido lugar)
     function recogerCercano() {
+        if (tiendaAbierta) return true;
         const it = itemCercano();
         if (!it) return false;
+        const iL = itemsLugar.indexOf(it);
+        if (iL >= 0) {                  // estante de un lugar seguro: se lleva sin avisarle a nadie
+            if (agregarItem(it.id)) { itemsLugar.splice(iL, 1); avisar("Recogiste: " + ITEMS[it.id].n, 2000); }
+            else avisar("No tenés lugar", 2000);
+            return true;
+        }
         if (agregarItem(it.id, it.c)) {
             if (conexion && it.k) { redItemSacado(it.k); enviarRed({ tipo: "recoger", k: it.k }); }
             else inv.mundo.splice(inv.mundo.indexOf(it), 1);
@@ -2805,7 +2821,7 @@ if (!gl) {
     function textoAbertura(o, tactil) {
         let t;
         if (o.esPuerta && zona === "casa") {
-            t = salidaAbierta() ? "salir de casa" : "puerta cerrada (se abre a las 12:00 AM)";
+            t = salidaAbierta() ? "salir de casa" : "puerta cerrada";
         } else if (o.esPuerta) {
             if (o.abierta) t = "cerrar puerta";
             else if (o.trabada) {
@@ -2859,6 +2875,9 @@ if (!gl) {
     function usarAbertura() {
         if (inv.abierto || sv.durmiendo || !sv.vivo || window.juegoPausado) return false;
         if (pasoVentana) { cruzarVentana(pasoVentana.o); return true; }      // 2º toque mientras cruzás: más rápido
+        if (tiendaAbierta) return true;
+        const lugarAcc = accionLugar();
+        if (lugarAcc) { lugarAcc.hacer(); return true; }
         const o = aberturaCercana();
         if (!o) return false;
         if (o.esPuerta && zona === "casa") { abrirDestinos(); return true; }       // la puerta de tu casa no se abre: es la salida
@@ -4010,6 +4029,7 @@ if (!gl) {
         window.inventarioAbierto = false;
         invFondo.classList.remove("visible");
         const ok = function (id) { return typeof id === "string" && ITEMS[id] ? id : null; };
+        dinero = datos && typeof datos === "object" ? Math.max(0, Math.min(999999, Math.floor(+datos.dinero) || 0)) : 0;
         if (datos && typeof datos === "object") {
             if (datos.aberturas) aplicarEstados(datos.aberturas, true);
             (datos.barra || []).slice(0, BARRA_N).forEach(function (id, i) { inv.barra[i] = ok(id); });
@@ -4083,6 +4103,7 @@ if (!gl) {
     function exportarInventario() {
         return {
             v: 4,
+            dinero: dinero,
             aberturas: estadoAberturas(),
             barra: inv.barra.slice(),
             equipo: Object.assign({}, inv.equipo),
@@ -4111,9 +4132,9 @@ if (!gl) {
     }
     const bufferItems = gl.createBuffer();
     function dibujarItems(t) {
-        if (!sv.activo || inv.mundo.length === 0) return;
+        if (!sv.activo || (inv.mundo.length === 0 && itemsLugar.length === 0)) return;
         const lista = [];
-        for (const it of inv.mundo) {
+        for (const it of inv.mundo.concat(itemsLugar)) {
             if (Math.hypot(it.x - px, it.z - pz) > 40) continue;
             if (zona === "casa" && !enPatio(it.x, it.z)) continue;
             const f = FORMA_ITEM[it.id] || [0.3, 0.2, 0.3];
@@ -4230,10 +4251,11 @@ if (!gl) {
     }
     function hablarNpc(n, texto, forzar) {
         const ahoraMs = performance.now();
-        if (!forzar && (ahoraMs - n.habloMs < 4500 || ahoraMs - ultimoHablaNpc < 2200)) return;
+        if (!forzar && (ahoraMs - n.habloMs < 4500 || ahoraMs - ultimoHablaNpc < 2200)) return false;
         n.habloMs = ahoraMs; ultimoHablaNpc = ahoraMs;
         mostrarHablaNpc(n.i, texto);
         enviarRed({ tipo: "npchabla", i: n.i, t: texto });
+        return true;
     }
     function elegirTexto(l) { return l[Math.floor(Math.random() * l.length)]; }
 
@@ -4362,19 +4384,26 @@ if (!gl) {
                 const gol = !!n.golpeadoPor[j.id], ofe = !!n.ofendidoPor[j.id];
                 const calma = (n.calmaPor[j.id] || 0) > ahoraMs;          // lo calmaste hablando
                 const asus = (n.asustadoPor[j.id] || 0) > ahoraMs;        // lo asustaste hablando
+                if (!enProp && n.vistoPor) delete n.vistoPor[j.id];      // si salís de la casa, la próxima vez te vuelve a recibir
                 if (!(enProp || (gol && d < 8) || asus)) continue;
+                // lo que dice al verte entrar lo dice UNA sola vez por visita (no se repite mientras estés adentro)
+                if (!n.vistoPor) n.vistoPor = {};
+                const recibir = function (t) {
+                    if (n.vistoPor[j.id]) return;
+                    if (hablarNpc(n, t)) n.vistoPor[j.id] = true;
+                };
                 let r = null;
                 if (n.tipo === "agresivo") {
                     if (!calma) r = "ataca";
-                    else if (d < 3) hablarNpc(n, "Mmm... yo te estoy mirando.");
+                    else if (d < 3) recibir("Mmm... yo te estoy mirando.");
                 } else if (n.tipo === "defensor") {
                     if (ofe && !calma) r = "ataca";
-                    else if (!ofe && d < 4) hablarNpc(n, "Ey... mirá, no toques nada.");
+                    else if (!ofe && d < 4) recibir("Ey... mirá, no toques nada.");
                 } else if (n.tipo === "cobarde") {
                     if (asus || (!calma && (ofe || d < 7))) r = "huye";
                 } else {                                            // pacífico
                     if (gol || asus) r = "huye";
-                    else if (d < 4) hablarNpc(n, elegirTexto(["Ah, hola. Pasá, pasá, no hay problema.", "Si tenés hambre o sed, fijate por ahí."]));
+                    else if (d < 4) recibir(elegirTexto(["Ah, hola. Pasá, pasá, no hay problema.", "Hola... si tenés hambre o sed, fijate por ahí."]));
                 }
                 if (r === "ataca" && d < dAt) { objAt = j; dAt = d; }
                 else if (r === "huye" && d < dHu) { objHu = j; dHu = d; }
@@ -5821,7 +5850,8 @@ if (!gl) {
         cartelCama.style.display = cerca ? "block" : "none";
         if (cerca) cartelCama.textContent = tactil ? "Dormir" : "E: dormir";
         const ab = (!sv.durmiendo && !inv.abierto && sv.vivo) ? aberturaCercana() : null;
-        const txtAb = ab ? textoAbertura(ab, tactil) : null;
+        const lugarAcc = (!sv.durmiendo && !inv.abierto && sv.vivo && !ab) ? accionLugar() : null;
+        const txtAb = ab ? textoAbertura(ab, tactil) : (lugarAcc ? lugarAcc.texto : null);
         botonAbertura.style.display = txtAb ? "block" : "none";
         if (txtAb) botonAbertura.textContent = txtAb;
         // pasar por una ventana abierta o rota: botón redondo en el celu, cartel en la compu
@@ -6124,14 +6154,14 @@ if (!gl) {
     }
 
     // ===== SALIR DE CASA =====
-    // Empezás adentro de tu casa (zona cerrada). De noche, desde las 12:00 AM, se habilita la puerta: ahí elegís
+    // Empezás adentro de tu casa (zona cerrada). La puerta siempre está habilitada: ahí elegís
     // en el mapa a dónde ir. Los lugares de la lista todavía no hacen nada (solo están los botones).
     const DESTINOS = [
-        { id: "barrio", e: "🏘️", n: "Casas del barrio", d: "Las casas que ya están hechas", listo: true },
+        { id: "barrio", e: "⚔️", n: "Zona de guerra", d: "Las casas del barrio: acá todo es peligroso", listo: true },
         { id: "peligro", e: "⚠️", n: "Zona peligrosa" },
         { id: "tranquilo", e: "🌳", n: "Barrios tranquilos" },
-        { id: "super", e: "🛒", n: "Supermercados" },
-        { id: "comercio", e: "💱", n: "Compra y venta" },
+        { id: "super", e: "🛒", n: "Supermercado", d: "Saqueá todo lo que quieras, sin problemas", listo: true },
+        { id: "comercio", e: "💱", n: "Compra y venta", d: "Vendé lo que juntaste y comprá lo que te falta", listo: true },
         { id: "mas", e: "➕", n: "Más lugares" }
     ];
     let destinosAbierto = false;
@@ -6148,10 +6178,8 @@ if (!gl) {
         if (panelDestinos) panelDestinos.classList.remove("visible");
     }
 
-    function salidaAbierta() {
-        const m = estacionesJuego.minDia;
-        return typeof m === "number" && m >= SALIDA_DESDE && m < SALIDA_HASTA;
-    }
+    // La puerta de tu casa no tiene horario: podés salir cuando quieras, de día o de noche
+    function salidaAbierta() { return true; }
 
     const estiloDestinos = document.createElement("style");
     estiloDestinos.textContent =
@@ -6180,14 +6208,14 @@ if (!gl) {
     const btnSalirCasa = document.createElement("button");
     btnSalirCasa.id = "btnSalirCasa";
     btnSalirCasa.type = "button";
-    btnSalirCasa.textContent = "🌙 Salir de casa";
+    btnSalirCasa.textContent = "🚪 Salir de casa";
     document.body.appendChild(btnSalirCasa);
 
     const panelDestinos = document.createElement("div");
     panelDestinos.id = "panelDestinos";
     panelDestinos.innerHTML =
         '<div class="dCaja"><h2>🗺️ ¿A dónde vas?</h2>' +
-        '<p>Es de noche: ya podés salir. Elegí un lugar del mapa.</p>' +
+        '<p>Elegí un lugar del mapa.</p>' +
         '<canvas width="240" height="240"></canvas><div class="dLey">● Tu casa</div>' +
         '<div class="dGrid"></div>' +
         '<button type="button" class="dQuedar">Quedarme en casa</button></div>';
@@ -6227,7 +6255,7 @@ if (!gl) {
     function abrirDestinos() {
         if (destinosAbierto || zona !== "casa" || !sv.activo || !sv.vivo || window.juegoPausado) return;
         if (!salidaAbierta()) {
-            avisar("La puerta está cerrada: solo se puede salir de noche, desde las 12:00 AM", 3200);
+            avisar("La puerta está cerrada", 3200);
             return;
         }
         if (inv.abierto) cerrarInventario();
@@ -6247,6 +6275,14 @@ if (!gl) {
         if (!("ontouchstart" in window) && !inv.abierto) { try { canvas.requestPointerLock(); } catch (e) {} }
     }
     function irADestino(id) {
+        if (id === "super" || id === "comercio") {
+            cerrarDestinos();
+            entrarZona(id);
+            salidaPrev = null;
+            btnSalirCasa.style.display = "none";
+            avisar(id === "super" ? "🛒 Supermercado: llevate lo que quieras, nadie te va a decir nada" : "💱 Compra y venta: hablale al vendedor", 3500);
+            return;
+        }
         if (id !== "barrio") return;              // los demás lugares todavía no existen
         cerrarDestinos();
         entrarZona("barrio");
@@ -6255,7 +6291,7 @@ if (!gl) {
         pasoVentana = null; tareaVidrios = null;
         salidaPrev = null;
         btnSalirCasa.style.display = "none";
-        avisar("Saliste de tu casa", 2500);
+        avisar("Entraste a la zona de guerra", 2500);
     }
 
     // Esc / botón "atrás": primero cierra el menú de destinos
@@ -6264,6 +6300,240 @@ if (!gl) {
         window.cerrarInventario = function () {
             if (destinosAbierto) { cerrarDestinos(); return; }
             cerrarInv();
+        };
+    })();
+
+    // ===== LUGARES SEGUROS: SUPERMERCADO Y COMPRA Y VENTA =====
+    // Dos zonas cerradas como tu casa (cargan solo su propio edificio). Se llega desde el mapa de la puerta y se vuelve a tu casa.
+    // - Supermercado: estantes con comida, agua, remedios y ropa. Podés llevarte todo sin que nadie reaccione (no hay NPCs ni alarma de robo).
+    //   Se vuelve a surtir cada 10 minutos (por jugador: el stock no se comparte en un servidor).
+    // - Compra y venta: un vendedor te compra tus cosas (te da plata) y te vende otras.
+    // Cada edificio está lejos del barrio (en otras coordenadas) para no mezclarse con sus objetos.
+    const LUGAR_BASE = { super: [200, 0], comercio: [260, 0] };
+    const SURTIDO_MS = 10 * 60 * 1000;
+    const LUGARES = {};
+    // [lo que cuesta comprarlo, lo que te pagan si lo vendés (0 = no lo compran)]
+    const PRECIOS = {
+        agua: [4, 2], comida: [6, 3], jarabe: [12, 6], venda: [8, 4], anabolico: [25, 12],
+        palo: [5, 2], cuchillo: [20, 10], hacha: [35, 17], muletas: [30, 15],
+        gorra: [8, 4], botas: [18, 9], camisa: [15, 7], pantalon: [15, 7], mochila: [40, 0]
+    };
+    const ORDEN_TIENDA = ["agua", "comida", "jarabe", "venda", "anabolico", "palo", "cuchillo", "hacha", "muletas", "gorra", "camisa", "pantalon", "botas", "mochila"];
+
+    function codigoZona() { return zona === "casa" ? 1 : zona === "super" ? 2 : zona === "comercio" ? 3 : 0; }
+    function enLugar() { return zona === "super" || zona === "comercio"; }
+
+    function prepararLugar(id) {
+        if (LUGARES[id]) return LUGARES[id];
+        const cx = LUGAR_BASE[id][0], cz = LUGAR_BASE[id][1];
+        const W = id === "super" ? 24 : 16, D = id === "super" ? 16 : 12;
+        const x1 = cx - W / 2, x2 = cx + W / 2, z1 = cz - D / 2, z2 = cz + D / 2;
+        const L = { id: id, datos: [], cols: [], rect: [x1, z1, x2, z2], surtidoT: 0, cx: cx, cz: cz,
+            spawn: { x: cx, z: z2 - 2.4, yaw: 0 }, salida: [cx, z2], mostrador: null };
+        // caja dibujada en este lugar; si es sólida también frena (la colisión va aparte para no mezclarse con el barrio)
+        const B = function (a, b, c, d, e, f, col, sol) {
+            caja(a, b, c, d, e, f, col, false, L.datos);
+            if (sol) L.cols.push([Math.min(a, d), Math.min(c, f), Math.max(a, d), Math.max(c, f), e, b]);
+        };
+        const t = 0.3, alto = 4.0;
+        const PISO = id === "super" ? [0.62, 0.62, 0.58] : [0.45, 0.36, 0.26];
+        const PARED_L = id === "super" ? [0.78, 0.78, 0.72] : [0.58, 0.46, 0.34];
+        B(x1 - 0.5, -0.1, z1 - 0.5, x2 + 0.5, 0, z2 + 0.5, PISO, false);                 // piso
+        B(x1 - 0.5, 0.02, z1 - 0.5, x2 + 0.5, 0.03, z2 + 0.5, PISO, false);
+        B(x1 - t, 0, z1 - t, x2 + t, alto, z1, PARED_L, true);                           // paredes
+        B(x1 - t, 0, z2, x2 + t, alto, z2 + t, PARED_L, true);
+        B(x1 - t, 0, z1, x1, alto, z2, PARED_L, true);
+        B(x2, 0, z1, x2 + t, alto, z2, PARED_L, true);
+        B(x1 - t, alto, z1 - t, x2 + t, alto + 0.25, z2 + t, TECHO_COLOR, false);          // techo
+        // puerta de salida (al frente): marco y hoja pintados en la pared
+        B(cx - 1.0, 0, z2 - 0.05, cx + 1.0, 2.3, z2 + 0.02, MADERA, false);
+        B(cx - 0.85, 0, z2 - 0.08, cx + 0.85, 2.15, z2 - 0.02, [0.20, 0.55, 0.30], false);
+        B(cx - 0.25, 1.0, z2 - 0.12, cx - 0.15, 1.1, z2 - 0.08, [0.9, 0.85, 0.2], false);  // manija
+        // franja de color en la pared de atrás
+        B(x1, 2.3, z1 + 0.01, x2, 3.2, z1 + 0.05, id === "super" ? [0.80, 0.18, 0.18] : [0.85, 0.65, 0.15], false);
+
+        if (id === "super") {
+            // 3 estantes largos (la parte de arriba está a la altura de la mano) + una caja registradora
+            L.estantes = [];
+            [-5.5, -2.0, 1.5].forEach(function (dz, i) {
+                const ez = cz + dz;
+                B(cx - 9.5, 0, ez - 0.5, cx + 5.5, 1.0, ez + 0.5, i === 2 ? [0.30, 0.34, 0.50] : [0.55, 0.36, 0.20], true);
+                B(cx - 9.5, 1.0, ez - 0.5, cx + 5.5, 1.04, ez + 0.5, [0.75, 0.75, 0.72], false);
+                L.estantes.push({ z: ez, tipo: i });
+            });
+            B(cx + 7.0, 0, cz + 3.5, cx + 10.0, 1.0, cz + 5.0, [0.25, 0.25, 0.28], true);   // caja
+            B(cx + 8.0, 1.0, cz + 3.9, cx + 8.7, 1.4, cz + 4.5, [0.15, 0.15, 0.17], false);
+        } else {
+            // mostrador al fondo con el vendedor atrás; cajones y estantes de adorno a los costados
+            B(cx - 3.0, 0, cz - 2.6, cx + 3.0, 1.05, cz - 1.8, [0.45, 0.30, 0.18], true);
+            B(cx - 3.0, 1.05, cz - 2.7, cx + 3.0, 1.12, cz - 1.7, [0.70, 0.55, 0.30], false);
+            const vz = cz - 3.6;
+            B(cx - 0.3, 0.0, vz - 0.2, cx + 0.3, 1.0, vz + 0.2, [0.15, 0.30, 0.45], false);      // cuerpo
+            B(cx - 0.45, 0.8, vz - 0.12, cx - 0.3, 1.0, vz + 0.12, [0.88, 0.68, 0.52], false);   // manos
+            B(cx + 0.3, 0.8, vz - 0.12, cx + 0.45, 1.0, vz + 0.12, [0.88, 0.68, 0.52], false);
+            B(cx - 0.22, 1.0, vz - 0.2, cx + 0.22, 1.45, vz + 0.2, [0.88, 0.68, 0.52], false);   // cabeza
+            B(cx - 0.28, 1.43, vz - 0.26, cx + 0.28, 1.58, vz + 0.26, [0.75, 0.20, 0.18], false);  // gorro
+            B(cx - 6.5, 0, cz - 5.2, cx - 3.5, 1.2, cz - 4.0, CAJA, true);
+            B(cx + 3.5, 0, cz - 5.2, cx + 6.5, 1.2, cz - 4.0, CAJA, true);
+            B(cx - 7.5, 0, cz + 1.0, cx - 6.5, 1.0, cz + 3.5, MADERA, true);
+            B(cx + 6.5, 0, cz + 1.0, cx + 7.5, 1.0, cz + 3.5, MADERA, true);
+            L.mostrador = [cx, cz - 1.0];
+        }
+        LUGARES[id] = L;
+        return L;
+    }
+
+    // Llena los estantes del supermercado
+    function surtirSuper(L) {
+        const lista = [];
+        const tipos = [["agua", "comida"], ["comida", "jarabe", "venda", "agua"], ["camisa", "pantalon", "gorra", "botas", "agua"]];
+        L.estantes.forEach(function (e) {
+            const pool = tipos[e.tipo];
+            for (let k = 0; k < 11; k++) {
+                const x = L.cx - 8.8 + k * 1.35;
+                lista.push({ id: pool[(k + e.tipo) % pool.length], x: x, y: 1.04, z: e.z + (k % 2 ? 0.15 : -0.15) });
+            }
+        });
+        lista.push({ id: "mochila", x: L.cx + 4.6, y: 1.04, z: L.estantes[2].z });
+        lista.push({ id: "venda", x: L.cx + 8.5, y: 1.0, z: L.cz + 4.6 });
+        L.items = lista;
+        L.surtidoT = Date.now();
+    }
+
+    // Te lleva a un lugar seguro (se llama desde entrarZona)
+    function entrarLugar(id) {
+        const L = prepararLugar(id);
+        zona = id;
+        colisiones.length = 0;
+        L.cols.forEach(function (c) { colisiones.push(c); });
+        PUERTAS = []; VENTANAS = []; NPCS = [];
+        cargarBuffer(L.datos);
+        if (id === "super") {
+            if (!L.surtidoT || Date.now() - L.surtidoT > SURTIDO_MS) surtirSuper(L);
+            itemsLugar = L.items;
+        } else {
+            itemsLugar = [];
+        }
+        px = L.spawn.x; pz = L.spawn.z; yaw = L.spawn.yaw; pitch = 0; saltoY = 0; velY = 0;
+        pasoVentana = null; tareaVidrios = null;
+    }
+
+    // Lo que podés hacer donde estás (salir, comerciar) o null
+    function accionLugar() {
+        if (!enLugar() || tiendaAbierta || destinosAbierto) return null;
+        const L = LUGARES[zona];
+        if (!L) return null;
+        const tactil = "ontouchstart" in window;
+        if (L.mostrador && Math.hypot(px - L.mostrador[0], pz - L.mostrador[1]) < 3.4)
+            return { texto: tactil ? "Comerciar" : "E: comerciar", hacer: abrirTienda };
+        if (Math.hypot(px - L.salida[0], pz - L.salida[1]) < 2.6)
+            return { texto: tactil ? "Salir" : "E: salir", hacer: function () { irACasa(); avisar("Volviste a tu casa", 2000); } };
+        return null;
+    }
+
+    // ----- Compra y venta -----
+    const estiloTienda = document.createElement("style");
+    estiloTienda.textContent =
+        "#panelTienda{position:fixed;inset:0;z-index:900;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.75);}" +
+        "#panelTienda.visible{display:flex;}" +
+        "#panelTienda .tCaja{width:min(94vw,560px);max-height:94vh;overflow:auto;box-sizing:border-box;padding:14px 16px;border-radius:18px;" +
+        "background:rgba(28,0,0,.95);border:2px solid rgba(255,215,220,.7);box-shadow:0 0 30px rgba(255,0,0,.4);color:#f1dede;text-align:center;" +
+        "font-family:'Cinzel Decorative',serif;}" +
+        "#panelTienda h2{margin:0 0 2px;font-size:1.2rem;letter-spacing:3px;font-weight:normal;text-shadow:0 0 10px #f00;}" +
+        "#panelTienda .tPlata{margin:0 0 8px;font-size:1rem;letter-spacing:2px;color:#ffd76a;}" +
+        "#panelTienda h3{margin:10px 0 6px;font-size:.85rem;letter-spacing:2px;font-weight:normal;opacity:.85;}" +
+        "#panelTienda .tGrid{display:grid;grid-template-columns:repeat(2,1fr);gap:6px;}" +
+        "#panelTienda .tBtn{font-family:inherit;color:#fff;background:rgba(60,0,0,.65);border:2px solid rgba(255,215,220,.55);border-radius:12px;" +
+        "padding:.45em .3em;cursor:pointer;font-size:.8rem;line-height:1.2;}" +
+        "#panelTienda .tBtn small{display:block;font-size:.65rem;opacity:.85;letter-spacing:1px;}" +
+        "#panelTienda .tBtn.no{opacity:.4;cursor:default;}" +
+        "#panelTienda .tVacio{font-size:.75rem;opacity:.7;padding:6px;}" +
+        "#panelTienda .tCerrar{margin-top:12px;font-family:inherit;font-size:.85rem;letter-spacing:2px;color:#fff;background:transparent;" +
+        "border:2px solid rgba(255,215,220,.55);border-radius:12px;padding:.45em 1.2em;cursor:pointer;}";
+    document.head.appendChild(estiloTienda);
+
+    const panelTienda = document.createElement("div");
+    panelTienda.id = "panelTienda";
+    panelTienda.innerHTML =
+        '<div class="tCaja"><h2>💱 Compra y venta</h2><div class="tPlata"></div>' +
+        '<h3>VENDER (lo que llevás)</h3><div class="tGrid tVender"></div>' +
+        '<h3>COMPRAR</h3><div class="tGrid tComprar"></div>' +
+        '<button type="button" class="tCerrar">Listo</button></div>';
+    document.body.appendChild(panelTienda);
+
+    // Todo lo que llevás que se puede vender (barra, bolsillos y manos; la ropa puesta y las mochilas no)
+    function refsVendibles() {
+        const l = [];
+        const ok = function (id) { return id && PRECIOS[id] && PRECIOS[id][1] > 0; };
+        inv.barra.forEach(function (id, i) { if (ok(id)) l.push({ t: "b", i: i }); });
+        ORDEN_CONT.forEach(function (k) { (inv.cont[k] || []).forEach(function (id, i) { if (ok(id)) l.push({ t: "c", k: k, i: i }); }); });
+        ["D", "I"].forEach(function (k) { if (ok(inv["mano" + k])) l.push({ t: "h", k: k }); });
+        return l;
+    }
+    function pintarTienda() {
+        panelTienda.querySelector(".tPlata").textContent = "💰 $" + dinero;
+        const vender = panelTienda.querySelector(".tVender"), comprar = panelTienda.querySelector(".tComprar");
+        vender.innerHTML = ""; comprar.innerHTML = "";
+        const cuenta = {};
+        refsVendibles().forEach(function (r) { const id = getRef(r); (cuenta[id] = cuenta[id] || []).push(r); });
+        const ids = Object.keys(cuenta);
+        if (!ids.length) vender.innerHTML = '<div class="tVacio" style="grid-column:1/3">No llevás nada que te compren.</div>';
+        ids.forEach(function (id) {
+            const b = document.createElement("button");
+            b.type = "button"; b.className = "tBtn";
+            b.innerHTML = ITEMS[id].e + " " + ITEMS[id].n + (cuenta[id].length > 1 ? " ×" + cuenta[id].length : "") + "<small>Vender: $" + PRECIOS[id][1] + "</small>";
+            b.addEventListener("click", function () {
+                const r = cuenta[id][0];
+                if (getRef(r) !== id) { pintarTienda(); return; }
+                setRef(r, null);
+                dinero += PRECIOS[id][1];
+                refrescarInventario(); pintarBarra();
+                avisar("Vendiste: " + ITEMS[id].n + " (+$" + PRECIOS[id][1] + ")", 1500);
+                pintarTienda();
+            });
+            vender.appendChild(b);
+        });
+        ORDEN_TIENDA.forEach(function (id) {
+            const b = document.createElement("button");
+            const alcanza = dinero >= PRECIOS[id][0];
+            b.type = "button"; b.className = "tBtn" + (alcanza ? "" : " no");
+            b.innerHTML = ITEMS[id].e + " " + ITEMS[id].n + "<small>Comprar: $" + PRECIOS[id][0] + "</small>";
+            b.addEventListener("click", function () {
+                if (dinero < PRECIOS[id][0]) { avisar("No te alcanza la plata", 1500); return; }
+                if (!agregarItem(id)) { avisar("No tenés lugar", 1800); return; }
+                dinero -= PRECIOS[id][0];
+                pintarBarra();
+                avisar("Compraste: " + ITEMS[id].n + " (-$" + PRECIOS[id][0] + ")", 1500);
+                pintarTienda();
+            });
+            comprar.appendChild(b);
+        });
+    }
+    function abrirTienda() {
+        if (tiendaAbierta || !sv.activo || !sv.vivo || window.juegoPausado) return;
+        if (inv.abierto) cerrarInventario();
+        tiendaAbierta = true;
+        window.inventarioAbierto = true;
+        if (sv.durmiendo) despertar();
+        if (window.soltarControles) window.soltarControles();
+        try { document.exitPointerLock(); } catch (e) {}
+        pintarTienda();
+        panelTienda.classList.add("visible");
+    }
+    function cerrarTienda() {
+        if (!tiendaAbierta) return;
+        tiendaAbierta = false;
+        window.inventarioAbierto = !!inv.abierto;
+        panelTienda.classList.remove("visible");
+        if (!("ontouchstart" in window) && !inv.abierto) { try { canvas.requestPointerLock(); } catch (e) {} }
+    }
+    panelTienda.querySelector(".tCerrar").addEventListener("click", cerrarTienda);
+    panelTienda.addEventListener("click", function (e) { if (e.target === panelTienda) cerrarTienda(); });
+    (function () {
+        const cerrarPrev = window.cerrarInventario;
+        window.cerrarInventario = function () {
+            if (tiendaAbierta) { cerrarTienda(); return; }
+            cerrarPrev();
         };
     })();
 
@@ -6276,9 +6546,9 @@ if (!gl) {
         if (btnSalirCasa.style.display !== disp) btnSalirCasa.style.display = disp;
         if (zona === "casa") {
             if (salidaPrev === null) {
-                avisar(abierta ? "Es de noche: podés salir por la puerta de tu casa" : "Estás en tu casa. De noche, desde las 12:00 AM, podés salir", 5000);
+                avisar("Estás en tu casa: podés salir por la puerta cuando quieras", 5000);
             } else if (abierta !== salidaPrev) {
-                avisar(abierta ? "🌙 Es medianoche: ya podés salir por la puerta" : "Amaneció: la puerta se cerró hasta la próxima noche", 6000);
+                avisar(abierta ? "Ya podés salir por la puerta" : "La puerta está cerrada", 4000);
             }
             salidaPrev = abierta;
         } else {

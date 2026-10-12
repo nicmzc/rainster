@@ -194,7 +194,8 @@ const servidor = http.createServer(function (req, res) {
                     jugadores: {}, sockets: new Set(), creada: Date.now(), vacioDesde: Date.now(),
                     reloj: Estaciones.crearReloj({ estacionInicial: estacionInicial }),
                     semilla: crypto.randomInt(1, 2147483647),   // de acá sale el mapa: todos los jugadores ven el mismo
-                    pausada: false, pausadaDesde: null, pausadoPor: null
+                    pausada: false, pausadaDesde: null, pausadoPor: null,
+                    aberturas: {}      // estado de puertas y ventanas: { "p3": [abierta, trabada] }
                 };
                 responder(res, 200, { id: id, token: salas[id].token });
             });
@@ -252,7 +253,7 @@ wss.on("connection", function (socket, req) {
     sala.jugadores[id] = { x: 0, z: 9, yaw: 0, y: 0, c: id % 6, n: limpiar(params.get("nombre"), 20) || "Jugador" };
     socket.send(JSON.stringify({
         tipo: "hola", id: id, reloj: sala.reloj, semilla: sala.semilla, ahora: Date.now(),
-        pausada: sala.pausada, host: sala.host
+        pausada: sala.pausada, host: sala.host, aberturas: sala.aberturas
     }));
 
     socket.on("message", function (mensaje) {
@@ -260,6 +261,18 @@ wss.on("connection", function (socket, req) {
             const datos = JSON.parse(mensaje);
             if (datos.tipo === "pausa") {
                 cambiarPausa(sala, socket, datos);
+                return;
+            }
+            if (datos.tipo === "abertura") {
+                // alguien abrió o cerró una puerta/ventana: se guarda (para los que entren después) y se avisa a los demás
+                if (typeof datos.k !== "string" || !/^[pv]\d{1,3}(_\d{1,2})?$/.test(datos.k)) return;
+                const a = datos.a ? 1 : 0, t = datos.t ? 1 : 0;
+                if (Object.keys(sala.aberturas).length > 600 && !sala.aberturas[datos.k]) return;
+                sala.aberturas[datos.k] = [a, t];
+                const aviso = JSON.stringify({ tipo: "abertura", k: datos.k, a: a, t: t });
+                for (const otro of sala.sockets) {
+                    if (otro !== socket && otro.readyState === WebSocket.OPEN) otro.send(aviso);
+                }
                 return;
             }
             if (datos.tipo === "golpe") {

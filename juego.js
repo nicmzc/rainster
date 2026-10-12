@@ -68,8 +68,37 @@ if (!gl) {
             }
         }
         if (solida) {
-            colisiones.push([x1, z1, x2, z2, y2]);
+            const col = [x1, z1, x2, z2, y2, y1];     // [x1, z1, x2, z2, techo, base]: ahora la colisión también sabe desde qué altura empieza
+            colisiones.push(col);
+            return col;
         }
+        return null;
+    }
+
+    // Una colisión invisible (para vidrios y hojas de puerta, que se dibujan aparte porque se mueven)
+    function colisionSola(x1, y1, z1, x2, y2, z2) {
+        const col = [x1, z1, x2, z2, y2, y1];
+        colisiones.push(col);
+        return col;
+    }
+
+    // ===== PUERTAS Y VENTANAS =====
+    // Cada abertura se dibuja aparte (no va en el buffer fijo) porque se abre y se cierra.
+    const COLORES_LLAVE = [
+        { n: "roja", c: [0.85, 0.15, 0.15] }, { n: "azul", c: [0.20, 0.40, 0.90] },
+        { n: "verde", c: [0.20, 0.70, 0.30] }, { n: "amarilla", c: [0.90, 0.80, 0.20] },
+        { n: "violeta", c: [0.60, 0.30, 0.80] }, { n: "naranja", c: [0.95, 0.55, 0.15] },
+        { n: "celeste", c: [0.40, 0.80, 0.90] }, { n: "blanca", c: [0.90, 0.90, 0.90] }
+    ];
+    let PUERTAS = [];       // una por casa
+    let VENTANAS = [];      // varias por casa
+    // Deja una puerta o ventana en un estado (abierta o cerrada) y activa o apaga su colisión
+    function fijarAbertura(o, abierta, trabada) {
+        o.abierta = !!abierta;
+        if (o.esPuerta) o.trabada = !!trabada;
+        else o.rota = !!trabada;      // en las ventanas el 3er dato es "rota" (así viaja por la red sin tocar el servidor)
+        // una puerta abierta no frena; las ventanas siempre son sólidas (cerradas, abiertas o rotas): se cruzan con el botón "Pasar"
+        o.col[4] = (o.esPuerta && o.abierta) ? -100 : o.alto;
     }
 
     // ===== MUNDO ALEATORIO =====
@@ -112,6 +141,7 @@ if (!gl) {
         datos.length = 0;
         colisiones.length = 0;
         CALLES = []; CASAS = []; CAMAS = []; MUNDO_INICIAL = [];
+        PUERTAS = []; VENTANAS = [];
 
         const R = crearAzar(semilla);
         const rnd = function (a, b) { return a + R() * (b - a); };
@@ -199,7 +229,7 @@ if (!gl) {
                 aberturas.slice().sort(function (p, q) { return p.a - q.a; }).forEach(function (ab) {
                     pieza(cur, ab.a, 0, ALTO_PARED, true);
                     if (ab.y1 > 0) pieza(ab.a, ab.b, 0, ab.y1, true);
-                    pieza(ab.a, ab.b, ab.y2, ALTO_PARED, false);
+                    pieza(ab.a, ab.b, ab.y2, ALTO_PARED, !!ab.esPuerta);
                     cur = ab.b;
                 });
                 pieza(cur, b, 0, ALTO_PARED, true);
@@ -211,7 +241,7 @@ if (!gl) {
             // Puerta (al frente) y ventanas
             const dp = 1.6;
             const px0 = rnd(-w + 1.6, w - 2.9);
-            const puerta = { a: px0 - dp / 2, b: px0 + dp / 2, y1: 0, y2: 2.2 };
+            const puerta = { a: px0 - dp / 2, b: px0 + dp / 2, y1: 0, y2: 2.2, esPuerta: true };
             const ventanasDe = function (lo, hi, max) {
                 const lista = [];
                 const n = ent(0, max);
@@ -241,15 +271,65 @@ if (!gl) {
             pared(false, -w, -w + t, -d + t, d - t, vIzq);                       // izquierda
             pared(false, w - t, w, -d + t, d - t, vDer);                         // derecha
 
-            // Marco y hoja de la puerta (abierta contra la pared de adentro) y travesaños de las ventanas
-            cl(puerta.a - 0.1, 0, d - t - 0.05, puerta.a, 2.3, d + 0.05, MADERA, false);
-            cl(puerta.b, 0, d - t - 0.05, puerta.b + 0.1, 2.3, d + 0.05, MADERA, false);
-            cl(puerta.a - 0.1, 2.2, d - t - 0.05, puerta.b + 0.1, 2.3, d + 0.05, MADERA, false);
-            cl(puerta.b + 0.1, 0.05, d - t - 0.08, puerta.b + 0.1 + dp - 0.1, 2.15, d - t - 0.01, [0.38, 0.25, 0.15], false);
-            vFrente.forEach(function (v) { cl((v.a + v.b) / 2 - 0.03, v.y1, d - t + 0.1, (v.a + v.b) / 2 + 0.03, v.y2, d - t + 0.2, MADERA, false); });
-            vAtras.forEach(function (v) { cl((v.a + v.b) / 2 - 0.03, v.y1, -d + t - 0.2, (v.a + v.b) / 2 + 0.03, v.y2, -d + t - 0.1, MADERA, false); });
-            vIzq.forEach(function (v) { cl(-w + t - 0.2, v.y1, (v.a + v.b) / 2 - 0.03, -w + t - 0.1, v.y2, (v.a + v.b) / 2 + 0.03, MADERA, false); });
-            vDer.forEach(function (v) { cl(w - t + 0.1, v.y1, (v.a + v.b) / 2 - 0.03, w - t + 0.2, v.y2, (v.a + v.b) / 2 + 0.03, MADERA, false); });
+            // Marco de la puerta (la hoja se dibuja aparte porque se abre y se cierra)
+            // (sobresale un poco hacia la abertura: si no, sus caras quedaban pegadas a las de la pared y titilaban)
+            cl(puerta.a - 0.1, 0, d - t - 0.05, puerta.a + 0.02, 2.3, d + 0.05, MADERA, false);
+            cl(puerta.b - 0.02, 0, d - t - 0.05, puerta.b + 0.1, 2.3, d + 0.05, MADERA, false);
+            cl(puerta.a - 0.1, 2.18, d - t - 0.05, puerta.b + 0.1, 2.3, d + 0.05, MADERA, false);
+
+            const idCasa = casas.length;
+            const O = T(0, 0);
+            const vecMundo = function (dx, dz) { const q = T(dx, dz); return [q[0] - O[0], q[1] - O[1]]; };
+            {
+                const rc = rectMundo(puerta.a, d - t, puerta.b, d);
+                PUERTAS.push({
+                    esPuerta: true, k: "p" + idCasa, casa: idCasa,
+                    bis: T(puerta.b, d - t / 2),                 // la bisagra
+                    dirC: vecMundo(-1, 0), dirA: vecMundo(0, -1),   // hacia dónde mira la hoja cerrada y abierta (se abre hacia adentro)
+                    largo: dp - 0.05, rect: rc, centro: T((puerta.a + puerta.b) / 2, d - t / 2),
+                    col: colisionSola(rc[0], 0, rc[1], rc[2], 2.2, rc[3]), alto: 2.2,
+                    abierta: false, trabada: false, llave: -1, ang: 0, ini: { a: false, t: false }
+                });
+            }
+
+            // Ventanas: marco fijo + dos hojas de vidrio que se abren hacia adentro (algunas quedan bloqueadas)
+            const nuevaVentana = function (v, lado, n) {
+                const horiz = lado === "f" || lado === "b";
+                let fa, fb, normal;
+                if (lado === "f") { fa = d - t; fb = d; normal = [0, -1]; }
+                else if (lado === "b") { fa = -d; fb = -d + t; normal = [0, 1]; }
+                else if (lado === "l") { fa = -w; fb = -w + t; normal = [1, 0]; }
+                else { fa = w - t; fb = w; normal = [-1, 0]; }
+                const pc = (fa + fb) / 2;
+                const P = function (s0) { return horiz ? T(s0, pc) : T(pc, s0); };    // punto de la pared (s0 = posición a lo largo)
+                const mr = 0.06, sa = 0.05;
+                if (horiz) {
+                    cl(v.a - mr, v.y1 - mr, fa - sa, v.a + 0.02, v.y2 + mr, fb + sa, MADERA, false);
+                    cl(v.b - 0.02, v.y1 - mr, fa - sa, v.b + mr, v.y2 + mr, fb + sa, MADERA, false);
+                    cl(v.a, v.y2 - 0.02, fa - sa, v.b, v.y2 + mr, fb + sa, MADERA, false);
+                    cl(v.a, v.y1 - mr, fa - sa, v.b, v.y1 + 0.015, fb + sa, MADERA, false);
+                } else {
+                    cl(fa - sa, v.y1 - mr, v.a - mr, fb + sa, v.y2 + mr, v.a + 0.02, MADERA, false);
+                    cl(fa - sa, v.y1 - mr, v.b - 0.02, fb + sa, v.y2 + mr, v.b + mr, MADERA, false);
+                    cl(fa - sa, v.y2 - 0.02, v.a, fb + sa, v.y2 + mr, v.b, MADERA, false);
+                    cl(fa - sa, v.y1 - mr, v.a, fb + sa, v.y1 + 0.015, v.b, MADERA, false);
+                }
+                const rv = horiz ? rectMundo(v.a, fa, v.b, fb) : rectMundo(fa, v.a, fb, v.b);
+                const A0 = P(v.a), A1 = P(v.b);
+                const ux = A1[0] - A0[0], uz = A1[1] - A0[1], ul = Math.hypot(ux, uz) || 1;
+                VENTANAS.push({
+                    esPuerta: false, k: "v" + idCasa + "_" + n, casa: idCasa,
+                    a0: A0, a1: A1, u: [ux / ul, uz / ul], dentro: vecMundo(normal[0], normal[1]),
+                    y1: v.y1, y2: v.y2, ancho: v.b - v.a, rect: rv, centro: P((v.a + v.b) / 2),
+                    col: colisionSola(rv[0], v.y1, rv[1], rv[2], v.y2, rv[3]), alto: v.y2,
+                    abierta: false, bloqueada: false, rota: false, ang: 0, ini: { a: false, t: false }
+                });
+            };
+            let nv = 0;
+            vFrente.forEach(function (v) { nuevaVentana(v, "f", nv++); });
+            vAtras.forEach(function (v) { nuevaVentana(v, "b", nv++); });
+            vIzq.forEach(function (v) { nuevaVentana(v, "l", nv++); });
+            vDer.forEach(function (v) { nuevaVentana(v, "r", nv++); });
 
             // Pared de adentro (a veces), con un pasillo
             const prohibido = [];      // zonas libres de muebles, en las coordenadas de la casa
@@ -258,16 +338,17 @@ if (!gl) {
             if ((W >= 10 || D >= 10) && R() < 0.65) {
                 const zp = rnd(-d + 3.8, d - 3.8);
                 const gx = rnd(-w + t + 1.6, w - t - 1.6);
-                pared(true, zp - 0.1, zp + 0.1, -w + t, w - t, [{ a: gx - 0.7, b: gx + 0.7, y1: 0, y2: 2.2 }]);
+                pared(true, zp - 0.1, zp + 0.1, -w + t, w - t, [{ a: gx - 0.7, b: gx + 0.7, y1: 0, y2: 2.2, esPuerta: true }]);
                 tabiques.push(rectMundo(-w + t, zp - 0.1, w - t, zp + 0.1));
                 prohibido.push([gx - 1.3, zp - 1.1, gx + 1.3, zp + 1.1]);
                 prohibido.push([-w + t, zp - 0.5, w - t, zp + 0.5]);
             }
 
             // Techo: tres capas, la de abajo se pasa un poco de las paredes
-            cl(-w - 0.4, ALTO_PARED + 0.02, -d - 0.4, w + 0.4, ALTO_PARED + 0.27, d + 0.4, TECHO_COLOR, false);
-            cl(-w + 0.6, ALTO_PARED + 0.27, -d + 0.6, w - 0.6, ALTO_PARED + 0.65, d - 0.6, [0.34, 0.21, 0.17], false);
-            cl(-w + 2.0, ALTO_PARED + 0.65, -d + 2.0, w - 2.0, ALTO_PARED + 1.0, d - 2.0, [0.28, 0.16, 0.13], false);
+            // (sólido: apoya justo sobre las paredes y no se puede atravesar ni de abajo ni de arriba)
+            cl(-w - 0.4, ALTO_PARED, -d - 0.4, w + 0.4, ALTO_PARED + 0.27, d + 0.4, TECHO_COLOR, true);
+            cl(-w + 0.6, ALTO_PARED + 0.27, -d + 0.6, w - 0.6, ALTO_PARED + 0.65, d - 0.6, [0.34, 0.21, 0.17], true);
+            cl(-w + 2.0, ALTO_PARED + 0.65, -d + 2.0, w - 2.0, ALTO_PARED + 1.0, d - 2.0, [0.28, 0.16, 0.13], true);
 
             // Muebles
             const tipos = [
@@ -416,6 +497,24 @@ if (!gl) {
             return da - db;
         })[0];
         SPAWN = inicial.spawn;
+        const R2 = crearAzar((semilla ^ 0x5bd1e995) >>> 0);
+        const casasConLlave = [];
+        casas.forEach(function (c, i) {
+            const pu = PUERTAS[i];
+            const esInicial = c === inicial;
+            const conLlave = !esInicial && R2() < 0.45;
+            if (conLlave) { pu.trabada = true; pu.llave = i; casasConLlave.push(i); }
+            const vs = VENTANAS.filter(function (v) { return v.casa === i; });
+            const pBloq = esInicial ? 0.2 : (conLlave ? 0.8 : 0.3);
+            vs.forEach(function (v) { v.bloqueada = R2() < pBloq; });
+            // la casa de arranque (y las que no tienen llave) siempre tienen al menos una ventana que se abre
+            if (vs.length && vs.every(function (v) { return v.bloqueada; }) && !conLlave) vs[0].bloqueada = false;
+        });
+        PUERTAS.concat(VENTANAS).forEach(function (o) {
+            o.ini = { a: false, t: !!o.trabada };
+            o.ang = 0;
+            fijarAbertura(o, false, o.trabada);
+        });
         ["mochila", "camisa", "pantalon", "gorra", "botas", "muletas"].forEach(function (id) { poner(id, puntoEnCasa(inicial)); });
         ["agua", "agua", "agua", "comida", "comida", "comida", "jarabe", "jarabe", "palo", "cuchillo"].forEach(function (id) {
             poner(id, puntoEnCasa(elegir(casas)));
@@ -423,6 +522,13 @@ if (!gl) {
         ["anabolico", "hacha"].forEach(function (id) {
             poner(id, R() < 0.5 ? puntoAfuera() : puntoEnCasa(elegir(casas)));
         });
+        casasConLlave.forEach(function (i) {
+            const libres = casas.filter(function (c, j) { return j !== i && !PUERTAS[j].trabada; });
+            const p = (R2() < 0.3 || libres.length === 0) ? puntoAfuera() : puntoEnCasa(libres[Math.floor(R2() * libres.length)]);
+            poner("llave" + i, p);
+        });
+        // vendas (se ponen al final para no cambiar dónde caen los demás objetos del mapa)
+        ["venda", "venda", "venda", "venda"].forEach(function (id) { poner(id, puntoEnCasa(elegir(casas))); });
         MUNDO_INICIAL = puestos;
 
         cantidad = datos.length / 6;
@@ -454,13 +560,14 @@ if (!gl) {
         precision mediump float;
         uniform vec3 fondo;
         uniform float nieblaDist;
+        uniform float alfa;
         varying vec3 vColor;
         varying float vDist;
 
         void main() {
             float niebla = clamp(vDist / nieblaDist, 0.0, 1.0);
             
-            gl_FragColor = vec4(mix(vColor, fondo, niebla), 1.0);
+            gl_FragColor = vec4(mix(vColor, fondo, niebla), alfa);
         }
     `);
     gl.compileShader(fragmentShader);
@@ -489,6 +596,8 @@ if (!gl) {
     gl.uniform3f(uTinte, 1, 1, 1);
     gl.uniform3f(uFondo, 0.10, 0.11, 0.14);
     gl.uniform1f(uNiebla, 35);
+    const uAlfa = gl.getUniformLocation(programa, "alfa");
+    gl.uniform1f(uAlfa, 1);
 
     // ===== JUGADOR =====
     let px = 0;
@@ -518,15 +627,32 @@ if (!gl) {
     const PASO = 0.35;
 
     // ¿Hay una caja sólida que te frena a esta altura? Si tus pies están más arriba que su techo, pasás por encima.
-    function choca(x, z, y) {
+    // Qué tan alta tenés la cabeza según la postura (para pasar por debajo de cosas)
+    function alturaCuerpo() { return (postura === 2 ? 0.45 : postura === 1 ? 1.05 : altura) + 0.1; }
+
+    // Ahora cada caja sabe también desde qué altura empieza (b[5]): el techo solo te frena si te pegás la cabeza con él.
+    function choca(x, z, y, h) {
+        const cab = y + (h == null ? alturaCuerpo() : h);
         for (const b of colisiones) {
             if (x + radio > b[0] && x - radio < b[2] &&
                 z + radio > b[1] && z - radio < b[3] &&
-                y < b[4] - PASO) {
+                y < b[4] - PASO && cab > b[5]) {
                 return true;
             }
         }
         return false;
+    }
+
+    // Al subir (salto) no podés atravesar un techo ni un cabezal: te frena la cabeza
+    function limiteCabeza(x, z, yAntes, yNueva) {
+        const cab = alturaCuerpo();
+        let tope = null;
+        for (const b of colisiones) {
+            if (x + radio > b[0] && x - radio < b[2] && z + radio > b[1] && z - radio < b[3] &&
+                b[5] >= yAntes + cab - 0.001 && yNueva + cab > b[5] &&
+                (tope === null || b[5] < tope)) tope = b[5];
+        }
+        return tope === null ? null : tope - cab - 0.001;
     }
 
     // Altura del piso bajo (x, z): el techo más alto de las cajas que están a tus pies
@@ -992,6 +1118,7 @@ if (!gl) {
                             desfaseMs: (mensaje.ahora || Date.now()) - Date.now()
                         });
                     }
+                    if (mensaje.aberturas) aplicarEstados(mensaje.aberturas, true);
                     if (mensaje.pausada && window.alPausaRemota) window.alPausaRemota(true, mensaje.host);
                     alEntrar();
                 }
@@ -1005,6 +1132,7 @@ if (!gl) {
                     if (window.alPausaRemota) window.alPausaRemota(mensaje.pausado, mensaje.host);
                 }
                 if (mensaje.tipo === "jugadores") otros = mensaje.jugadores;
+                if (mensaje.tipo === "abertura") aplicarEstados({ [mensaje.k]: [mensaje.a, mensaje.t] }, false, true);
                 if (mensaje.tipo === "golpe") recibirGolpe(mensaje.dano, mensaje.nombre);
                 if (mensaje.tipo === "cerrado") {
                     cerradoPorHost = true;
@@ -1476,6 +1604,7 @@ if (!gl) {
         e.reiniciarAmbiente = true;
         window.reiniciarFlechaEstacion();
         hudEstacion.style.display = "flex";
+        reiniciarAberturas();
         iniciarSupervivencia(config.supervivencia);
         iniciarInventario(config.inventario);
     };
@@ -1570,6 +1699,8 @@ if (!gl) {
         tos: { nombre: "Tos", sev: 8, dias: 2 }
     };
 
+    const SANGRADO_POR_SEG = [0, 0.15, 0.3, 0.45];     // salud que perdés por segundo según cuánto sangrás (1 a 3)
+
     const sv = {
         activo: false, vivo: true,
         salud: 100, saludMax: 100,
@@ -1579,6 +1710,7 @@ if (!gl) {
         enf: [],            // enfermedades pasajeras: { id, nombre, sev, tasa }
         cron: [],           // enfermedades crónicas: { nombre, dano } (bajan la salud máxima para siempre)
         anabolico: false,
+        sangrado: 0,        // 0 = no sangrás; 1 a 3 = cuánto (se frena con una venda)
         durmiendo: false, dormido: false, intento: 0,
         sombras: [], acumSombra: 0,
         velocidad: 1, fuerza: 1, audicion: 1,
@@ -1638,6 +1770,7 @@ if (!gl) {
         sv.enf = Array.isArray(d.enf) ? d.enf : [];
         sv.cron = Array.isArray(d.cron) ? d.cron : [];
         sv.anabolico = !!d.anabolico;
+        sv.sangrado = clamp(Math.round(+d.sangrado || 0), 0, 3);
         sv.piernas = [0, 1].map(function (i) {
             const q = d.piernas && d.piernas[i];
             const n = q ? clamp(Math.round(+q.n || 0), 0, 2) : 0;
@@ -1900,6 +2033,12 @@ if (!gl) {
     botonObjeto.className = "svBtn";
     const cartelCama = document.createElement("div");
     cartelCama.className = "svBtn";
+    const botonAbertura = document.createElement("div");
+    botonAbertura.className = "svBtn";
+    cajaAcciones.appendChild(botonAbertura);
+    const botonAbertura2 = document.createElement("div");      // cartel de pasar por la ventana (solo en la compu; en el celu es el botón redondo)
+    botonAbertura2.className = "svBtn";
+    cajaAcciones.appendChild(botonAbertura2);
     cajaAcciones.appendChild(botonObjeto);
     cajaAcciones.appendChild(cartelCama);
     document.body.appendChild(cajaAcciones);
@@ -1938,6 +2077,7 @@ if (!gl) {
         const estados = [];
         sv.enf.forEach(function (e) { estados.push(e.nombre); });
         sv.cron.forEach(function (c) { estados.push(c.nombre + " (crónica)"); });
+        if (sv.sangrado > 0) estados.push(["", "Sangrando", "Sangrando mucho", "Sangrando muchísimo"][sv.sangrado]);
         if (nivelTemp() !== 0) estados.push(NOMBRE_TEMP[String(nivelTemp())]);
         if (sv.sed <= 0) estados.push("Deshidratado");
         else if (sv.sed < 25) estados.push("Sed");
@@ -2012,7 +2152,8 @@ if (!gl) {
 
     window.addEventListener("keydown", function (e) {
         if (e.repeat || window.juegoPausado || !sv.activo || !sv.vivo) return;
-        if (e.code === A.teclas.interactuar) { if (!inv.abierto && !recogerCercano()) alternarDormir(); }
+        if (e.code === A.teclas.interactuar) { if (!inv.abierto && !recogerCercano() && !usarAbertura()) alternarDormir(); }
+        if (e.code === "KeyR" && !inv.abierto) pasarPorVentana();
         if (e.code === A.teclas.tirar && !inv.abierto) {
             const r = inv.manoD ? { t: "h", k: "D" } : (inv.manoI ? { t: "h", k: "I" } : null);
             if (r) tirar(r); else avisar("No tenés nada en las manos", 1500);
@@ -2037,6 +2178,9 @@ if (!gl) {
     cartelCama.addEventListener("click", alternarDormir);
     botonObjeto.addEventListener("touchstart", function (e) { e.preventDefault(); recogerCercano(); }, { passive: false });
     botonObjeto.addEventListener("click", recogerCercano);
+    botonAbertura.addEventListener("touchstart", function (e) { e.preventDefault(); usarAbertura(); }, { passive: false });
+    botonAbertura.addEventListener("click", usarAbertura);
+    botonAbertura2.addEventListener("click", pasarPorVentana);
 
     // ===== INVENTARIO =====
     // Sin ropa ni mochila puesta el inventario está vacío (solo tenés la barra rápida de abajo).
@@ -2054,13 +2198,15 @@ if (!gl) {
         agua:      { n: "Botella de agua", e: "💧", uso: "beber", d: "Calma la sed." },
         comida:    { n: "Lata de comida", e: "🥫", uso: "comer", d: "Calma el hambre." },
         jarabe:    { n: "Jarabe", e: "🧪", uso: "curar", d: "Cura resfríos y tos." },
-        anabolico: { n: "Anabólico", e: "💉", uso: "anabolico", d: "Te deja dormir aunque no puedas." }
+        anabolico: { n: "Anabólico", e: "💉", uso: "anabolico", d: "Te deja dormir aunque no puedas." },
+        venda:     { n: "Venda", e: "🩹", uso: "vendar", d: "Frena el sangrado de los cortes." }
     };
     const COLOR_ITEM = {
         mochila: [0.45, 0.30, 0.15], camisa: [0.30, 0.50, 0.80], pantalon: [0.25, 0.30, 0.60],
         gorra: [0.70, 0.20, 0.20], botas: [0.40, 0.25, 0.12], agua: [0.30, 0.70, 0.95],
         comida: [0.80, 0.60, 0.20], jarabe: [0.40, 0.85, 0.50], anabolico: [0.90, 0.90, 0.20],
-        palo: [0.55, 0.38, 0.20], cuchillo: [0.78, 0.80, 0.85], hacha: [0.52, 0.52, 0.58], muletas: [0.82, 0.80, 0.72]
+        palo: [0.55, 0.38, 0.20], cuchillo: [0.78, 0.80, 0.85], hacha: [0.52, 0.52, 0.58], muletas: [0.82, 0.80, 0.72],
+        venda: [0.93, 0.90, 0.80]
     };
     // ===== ACCESORIOS =====
     // Son gratis e ilimitados (no ocupan lugar ni hay que buscarlos en el mapa). Se eligen desde el inventario,
@@ -2325,11 +2471,18 @@ if (!gl) {
                 enMano(r);
                 return;
             }
+        } else if (def.llave) {
+            avisar("Acercate a la puerta con candado " + def.color + " y tocá el botón de abrir", 3000);
         } else if (def.uso) {
             if (def.uso === "beber") { window.Supervivencia.beber(45); avisar("Tomaste agua"); }
             if (def.uso === "comer") { window.Supervivencia.comer(35); avisar("Comiste"); }
             if (def.uso === "curar") { sv.enf = []; window.Supervivencia.curar(10); avisar("Te sentís mejor"); }
             if (def.uso === "anabolico") { sv.anabolico = true; avisar("Te inyectaste el anabólico"); }
+            if (def.uso === "vendar") {
+                if (sv.sangrado <= 0) { avisar("No estás sangrando", 1500); return; }      // no se gasta
+                sv.sangrado = 0;
+                avisar("Te vendaste: dejaste de sangrar");
+            }
             setRef(r, null);
         }
         inv.sel = null;
@@ -2374,6 +2527,379 @@ if (!gl) {
             avisar("No tenés lugar", 2000);
         }
         return true;
+    }
+
+    // ===== PUERTAS Y VENTANAS: abrir, cerrar, llaves, bloqueos, dibujo =====
+    function tengoItem(id) {
+        if (inv.manoD === id || inv.manoI === id || inv.barra.indexOf(id) >= 0) return true;
+        for (const k of ORDEN_CONT) if (inv.cont[k] && inv.cont[k].indexOf(id) >= 0) return true;
+        for (const k of ["D", "I"]) if (inv.cargaMano[k] && inv.cargaMano[k].indexOf(id) >= 0) return true;
+        return false;
+    }
+    function mayuscula(t) { return t.charAt(0).toUpperCase() + t.slice(1); }
+    function estoyEnCasa(i) {
+        const r = CASAS[i];
+        return !!r && px > r[0] + 0.2 && px < r[2] - 0.2 && pz > r[1] + 0.2 && pz < r[3] - 0.2;
+    }
+
+    // La que tenés adelante y al alcance (o null)
+    function aberturaCercana(filtro) {
+        const fx = -Math.sin(yaw), fz = -Math.cos(yaw);
+        let mejor = null, mejorD = 1e9;
+        const lista = PUERTAS.concat(VENTANAS);
+        for (const o of lista) {
+            if (filtro && !filtro(o)) continue;
+            const dx = o.centro[0] - px, dz = o.centro[1] - pz;
+            const d = Math.hypot(dx, dz);
+            if (d > (o.esPuerta ? 2.0 : 1.7) || d >= mejorD) continue;
+            if (d > 0.6 && (dx * fx + dz * fz) / d < 0.35) continue;        // tiene que estar más o menos adelante
+            if (!o.esPuerta && (saltoY > o.y2 || saltoY < o.y1 - 2.2)) continue;
+            mejor = o; mejorD = d;
+        }
+        return mejor;
+    }
+
+    function textoAbertura(o, tactil) {
+        let t;
+        if (o.esPuerta) {
+            if (o.abierta) t = "cerrar puerta";
+            else if (o.trabada) {
+                const nom = COLORES_LLAVE[o.llave % COLORES_LLAVE.length].n;
+                if (estoyEnCasa(o.casa)) t = "destrabar puerta";
+                else if (tengoItem("llave" + o.llave)) t = "abrir con la llave " + nom;
+                else t = "puerta con candado " + nom;
+            } else t = "abrir puerta";
+        } else {
+            if (tareaVidrios && tareaVidrios.o === o) t = "sacando vidrios… " + Math.round(tareaVidrios.t / TIEMPO_VIDRIOS * 100) + "%";
+            else if (o.rota) { if (o.abierta) return null; t = "sacar vidrios (3 s)"; }      // rota sin vidrios: no hay nada que hacer acá
+            else if (o.bloqueada) t = "ventana bloqueada";
+            else t = o.abierta ? "cerrar ventana" : "abrir ventana";
+        }
+        return tactil ? mayuscula(t) : "E: " + t;
+    }
+
+    // Ventanas por las que se puede pasar: abiertas o rotas
+    function esPasable(o) { return !o.esPuerta && (o.rota || o.abierta); }
+
+    // ¿Hay alguien parado donde cerraría la puerta / ventana? (vos u otro jugador)
+    function ocupada(o) {
+        const m = radio + 0.05;
+        const r = o.rect;
+        const dentro = function (x, z, y) {
+            if (!(x > r[0] - m && x < r[2] + m && z > r[1] - m && z < r[3] + m)) return false;
+            return o.esPuerta ? y < 2.2 : (y < o.y2 && y + 1.7 > o.y1);
+        };
+        if (dentro(px, pz, saltoY)) return true;
+        for (const id in otros) {
+            if (id === String(miId)) continue;
+            if (dentro(otros[id].x, otros[id].z, otros[id].y || 0)) return true;
+        }
+        return false;
+    }
+    // Si te cierran la puerta encima, te saca para el costado más cercano (para no quedar trabado adentro)
+    function sacarmeDe(o) {
+        const m = radio + 0.1, r = o.rect;
+        if (!(px > r[0] - m && px < r[2] + m && pz > r[1] - m && pz < r[3] + m)) return;
+        if ((r[2] - r[0]) < (r[3] - r[1])) px = (px - r[0] < r[2] - px) ? r[0] - m - 0.05 : r[2] + m + 0.05;
+        else pz = (pz - r[1] < r[3] - pz) ? r[1] - m - 0.05 : r[3] + m + 0.05;
+    }
+
+    function enviarAbertura(o) {
+        if (conexion && conexion.readyState === WebSocket.OPEN) {
+            conexion.send(JSON.stringify({ tipo: "abertura", k: o.k, a: o.abierta ? 1 : 0, t: (o.esPuerta ? o.trabada : o.rota) ? 1 : 0 }));
+        }
+    }
+
+    // Lo que pasa al apretar E / el botón. Devuelve true si había algo para abrir o cerrar.
+    function usarAbertura() {
+        if (inv.abierto || sv.durmiendo || !sv.vivo || window.juegoPausado) return false;
+        if (pasoVentana) { cruzarVentana(pasoVentana.o); return true; }      // 2º toque mientras cruzás: más rápido
+        const o = aberturaCercana();
+        if (!o) return false;
+        if (o.esPuerta) {
+            if (o.abierta) {
+                if (ocupada(o)) { avisar("Hay alguien en la puerta", 1500); return true; }
+                fijarAbertura(o, false, o.trabada);
+                avisar("Cerraste la puerta", 1000);
+            } else if (o.trabada) {
+                const nom = COLORES_LLAVE[o.llave % COLORES_LLAVE.length].n;
+                if (estoyEnCasa(o.casa)) {
+                    fijarAbertura(o, true, false);
+                    avisar("Destrabaste la puerta desde adentro", 1800);
+                } else if (tengoItem("llave" + o.llave)) {
+                    fijarAbertura(o, true, false);
+                    avisar("Abriste la puerta con la llave " + nom, 2000);
+                } else {
+                    avisar("Está cerrada con llave. Buscá la llave " + nom, 2400);
+                    return true;
+                }
+            } else {
+                fijarAbertura(o, true, false);
+                avisar("Abriste la puerta", 1000);
+            }
+        } else {
+            if (o.rota) {                                        // rota: sacar los vidrios (o dejar de sacarlos)
+                if (tareaVidrios) { tareaVidrios = null; avisar("Dejaste de sacar los vidrios", 1200); }
+                else if (!o.abierta) tareaVidrios = { o: o, t: 0 };
+                return true;
+            }
+            if (o.bloqueada) { avisar("La ventana está bloqueada: no se abre", 2000); return true; }
+            if (o.abierta) {
+                if (ocupada(o)) { avisar("No podés cerrarla con alguien en la ventana", 1800); return true; }
+                fijarAbertura(o, false);
+                avisar("Cerraste la ventana", 1000);
+            } else {
+                fijarAbertura(o, true);
+                avisar("Abriste la ventana", 1000);
+            }
+        }
+        ruidoPulso = Math.max(ruidoPulso, 6);
+        enviarAbertura(o);
+        return true;
+    }
+
+    // ===== VENTANAS: romper, sacar vidrios y pasar =====
+    const TIEMPO_VIDRIOS = 3;        // segundos que lleva sacar los vidrios rotos
+    let pasoVentana = null;          // cruce en curso: { o, t, dur, rapido, x0, z0, y0, w0, w1 }
+    let tareaVidrios = null;         // sacando vidrios: { o, t }
+
+    // Algo en la mano para romper el vidrio sin lastimarte (palo, cuchillo, hacha, muletas)
+    function objetoParaRomper() {
+        const val = function (id) { return id && ITEMS[id] && ITEMS[id].mano ? id : null; };
+        return val(inv.manoD) || val(inv.manoI);
+    }
+
+    function romperVentana(o) {
+        if (o.rota || o.abierta || o.bloqueada) return;
+        const ob = objetoParaRomper();
+        fijarAbertura(o, false, true);                 // rota, con los vidrios todavía en el marco
+        ruidoPulso = Math.max(ruidoPulso, 30);         // se oye bastante lejos
+        if (ob) {
+            avisar("Rompiste la ventana con " + ITEMS[ob].n.toLowerCase() + ". Sacá los vidrios antes de pasar", 3500);
+        } else {
+            sv.sangrado = Math.max(sv.sangrado, 1);    // te cortás la mano
+            avisar("Rompiste la ventana con la mano y te cortaste. Sacá los vidrios y vendate", 4500);
+        }
+        enviarAbertura(o);
+    }
+
+    // Botón redondo de pasar (R en la compu): cruza la ventana abierta o rota que tengas cerca
+    function pasarPorVentana() {
+        if (pasoVentana) { cruzarVentana(pasoVentana.o); return true; }      // 2º toque: más rápido
+        if (inv.abierto || sv.durmiendo || !sv.vivo || window.juegoPausado) return false;
+        const o = aberturaCercana(esPasable);
+        if (!o) return false;
+        cruzarVentana(o);
+        return true;
+    }
+
+    // Golpear una ventana cerrada (la que tenés adelante): se rompe
+    function ventanaApuntada(alcance) {
+        const fx = -Math.sin(yaw), fz = -Math.cos(yaw);
+        let mejor = null, mejorD = 1e9;
+        for (const o of VENTANAS) {
+            if (o.rota || o.abierta || o.bloqueada) continue;
+            const dx = o.centro[0] - px, dz = o.centro[1] - pz;
+            const d = Math.hypot(dx, dz);
+            if (d > Math.max(1.7, alcance + 0.3) || d >= mejorD) continue;
+            if (d > 0.6 && (dx * fx + dz * fz) / d < 0.7) continue;
+            if (saltoY > o.y2 || saltoY < o.y1 - 2.2) continue;
+            mejor = o; mejorD = d;
+        }
+        return mejor;
+    }
+
+    // Pasar al otro lado. Un segundo toque mientras cruzás lo hace más rápido, pero hace más ruido.
+    function cruzarVentana(o) {
+        if (pasoVentana) {
+            if (!pasoVentana.rapido) {
+                const p = pasoVentana.t / pasoVentana.dur;
+                pasoVentana.rapido = true;
+                pasoVentana.dur = 0.5;
+                pasoVentana.t = p * 0.5;
+                ruidoPulso = Math.max(ruidoPulso, 18);
+            }
+            return;
+        }
+        tareaVidrios = null;
+        if (inv.abierto || sv.durmiendo || !sv.vivo) return;
+        const rx = px - o.centro[0], rz = pz - o.centro[1];
+        const lado = (rx * o.dentro[0] + rz * o.dentro[1]) >= 0 ? 1 : -1;       // 1 = estás del lado de adentro
+        const lat = clamp(rx * o.u[0] + rz * o.u[1], -(o.ancho / 2 - 0.35), o.ancho / 2 - 0.35);
+        const bx = o.centro[0] + o.u[0] * lat, bz = o.centro[1] + o.u[1] * lat;
+        const w0 = [bx + o.dentro[0] * lado * 0.55, bz + o.dentro[1] * lado * 0.55];     // frente a la ventana
+        const w1 = [bx - o.dentro[0] * lado * 0.75, bz - o.dentro[1] * lado * 0.75];     // del otro lado
+        if (choca(w1[0], w1[1], saltoY)) { avisar("No hay lugar del otro lado", 1800); return; }
+        pasoVentana = { o: o, t: 0, dur: 1.4, rapido: false, x0: px, z0: pz, y0: saltoY, w0: w0, w1: w1 };
+        ruidoPulso = Math.max(ruidoPulso, 7);
+        if (o.rota && !o.abierta) {                    // pasás por arriba de los vidrios
+            sv.sangrado = Math.min(3, sv.sangrado + 1);
+            avisar("Te cortaste con los vidrios rotos: sangrás más", 3000);
+        }
+    }
+
+    // Se llama en cada cuadro: mientras cruzás, la ventana manda sobre tu posición
+    function actualizarCruce(dt) {
+        const c = pasoVentana;
+        if (!c) return;
+        if (!sv.vivo) { pasoVentana = null; return; }
+        c.t += dt;
+        const p = Math.min(1, c.t / c.dur), A = 0.3;
+        let x, z, arco = 0;
+        if (p < A) {
+            const q = p / A;
+            x = c.x0 + (c.w0[0] - c.x0) * q; z = c.z0 + (c.w0[1] - c.z0) * q;
+        } else {
+            const q = (p - A) / (1 - A);
+            x = c.w0[0] + (c.w1[0] - c.w0[0]) * q; z = c.w0[1] + (c.w1[1] - c.w0[1]) * q;
+            arco = Math.sin(Math.PI * q) * 0.25;
+        }
+        px = x; pz = z; saltoY = c.y0 + arco; velY = 0;
+        if (p >= 1) { pasoVentana = null; saltoY = c.y0; }
+    }
+
+    // Sacar los vidrios: 3 segundos quieto. Si te movés o te alejás se cancela.
+    function actualizarVidrios(dt, seMueve) {
+        const T = tareaVidrios;
+        if (!T) return;
+        const o = T.o;
+        const lejos = Math.hypot(o.centro[0] - px, o.centro[1] - pz) > 2.0;
+        if (!sv.vivo || sv.durmiendo || inv.abierto || seMueve || lejos) {
+            tareaVidrios = null;
+            if (sv.vivo && (seMueve || lejos)) avisar("Dejaste de sacar los vidrios", 1200);
+            return;
+        }
+        T.t += dt;
+        ruidoPulso = Math.max(ruidoPulso, 4);
+        if (T.t >= TIEMPO_VIDRIOS) {
+            tareaVidrios = null;
+            fijarAbertura(o, true, true);              // rota y sin vidrios: se pasa sin cortarse
+            avisar("Sacaste los vidrios: ya podés pasar sin cortarte", 2500);
+            enviarAbertura(o);
+        }
+    }
+
+    // Estados: para guardar la partida, para el servidor y para reiniciar
+    function estadoAberturas() {
+        const e = {};
+        PUERTAS.concat(VENTANAS).forEach(function (o) { e[o.k] = [o.abierta ? 1 : 0, (o.esPuerta ? o.trabada : o.rota) ? 1 : 0]; });
+        return e;
+    }
+    function aplicarEstados(e, instantaneo, remoto) {
+        if (!e || typeof e !== "object") return;
+        PUERTAS.concat(VENTANAS).forEach(function (o) {
+            const v = e[o.k];
+            if (!Array.isArray(v)) return;
+            if (!o.esPuerta && o.bloqueada) return;                 // una ventana bloqueada nunca se abre
+            const abre = !!+v[0];
+            if (!abre && remoto) sacarmeDe(o);
+            fijarAbertura(o, abre, !!+v[1]);
+            if (instantaneo) o.ang = abre ? 1 : 0;
+        });
+    }
+    function reiniciarAberturas() {
+        PUERTAS.concat(VENTANAS).forEach(function (o) {
+            fijarAbertura(o, o.ini.a, o.ini.t);
+            o.ang = o.ini.a ? 1 : 0;
+        });
+    }
+    function actualizarAberturas(dt) {
+        const paso = dt * 3.2;       // abrir o cerrar tarda un tercio de segundo
+        PUERTAS.concat(VENTANAS).forEach(function (o) {
+            const meta = o.abierta ? 1 : 0;
+            if (o.ang < meta) o.ang = Math.min(meta, o.ang + paso);
+            else if (o.ang > meta) o.ang = Math.max(meta, o.ang - paso);
+        });
+    }
+
+    // Caja que sale de un punto (hx, hz) en la dirección (ux, uz): s0..s1 a lo largo, de grosor "grosor", entre y1 e y2
+    function cajaOrientada(lista, hx, hz, ux, uz, s0, s1, grosor, y1, y2, col) {
+        const vx = -uz, vz = ux, g = grosor / 2;
+        const P = [];
+        for (let i = 0; i < 8; i++) {
+            const a = (i & 1) ? s1 : s0, y = ((i >> 1) & 1) ? y2 : y1, q = ((i >> 2) & 1) ? g : -g;
+            P.push([hx + ux * a + vx * q, y, hz + uz * a + vz * q]);
+        }
+        cuboATriangulos(lista, P, col);
+    }
+
+    const COLOR_HOJA = [0.38, 0.25, 0.15], COLOR_METAL = [0.72, 0.68, 0.40];
+    const COLOR_VIDRIO = [0.62, 0.80, 0.90];
+    const COLOR_VIDRIO_ROTO = [0.85, 0.93, 0.97];
+    const bufferAberturas = gl.createBuffer();
+    const bufferVidrios = gl.createBuffer();
+    let vidriosListos = [];
+
+    function dibujarAberturas() {
+        const lista = [], vidrios = [];
+        for (const o of PUERTAS) {
+            if (Math.hypot(o.bis[0] - px, o.bis[1] - pz) > 40) continue;
+            const th = o.ang * Math.PI / 2 * 0.97;
+            const ux = o.dirC[0] * Math.cos(th) + o.dirA[0] * Math.sin(th);
+            const uz = o.dirC[1] * Math.cos(th) + o.dirA[1] * Math.sin(th);
+            cajaOrientada(lista, o.bis[0], o.bis[1], ux, uz, 0.02, o.largo, 0.07, 0.02, 2.17, COLOR_HOJA);
+            cajaOrientada(lista, o.bis[0], o.bis[1], ux, uz, 0.12, o.largo - 0.12, 0.085, 0.12, 0.2, [0.33, 0.21, 0.12]);   // zócalo
+            cajaOrientada(lista, o.bis[0], o.bis[1], ux, uz, o.largo - 0.22, o.largo - 0.1, 0.13, 0.95, 1.05, COLOR_METAL);  // picaporte
+            if (o.trabada && o.ang < 0.05) {
+                // candado del color de su llave
+                cajaOrientada(lista, o.bis[0], o.bis[1], ux, uz, o.largo - 0.4, o.largo - 0.24, 0.12, 1.15, 1.4, COLORES_LLAVE[o.llave % COLORES_LLAVE.length].c);
+            }
+        }
+        for (const o of VENTANAS) {
+            if (Math.hypot(o.centro[0] - px, o.centro[1] - pz) > 40) continue;
+            const th = o.rota ? 0 : o.ang * 1.45;       // rota: las hojas quedan cerradas, sin vidrio
+            const c = Math.cos(th), sn = Math.sin(th);
+            const L = o.ancho / 2 - 0.01;
+            const alto = o.y2 - o.y1;
+            for (let h = 0; h < 2; h++) {
+                const sg = h === 0 ? 1 : -1;                 // hoja izquierda va hacia +u, hoja derecha hacia -u
+                const hp = h === 0 ? o.a0 : o.a1;
+                const ux = sg * o.u[0] * c + o.dentro[0] * sn, uz = sg * o.u[1] * c + o.dentro[1] * sn;
+                cajaOrientada(lista, hp[0], hp[1], ux, uz, 0.01, L, 0.05, o.y1 + 0.01, o.y1 + 0.07, MADERA);
+                cajaOrientada(lista, hp[0], hp[1], ux, uz, 0.01, L, 0.05, o.y2 - 0.07, o.y2 - 0.01, MADERA);
+                cajaOrientada(lista, hp[0], hp[1], ux, uz, 0.01, 0.07, 0.05, o.y1 + 0.01, o.y2 - 0.01, MADERA);
+                cajaOrientada(lista, hp[0], hp[1], ux, uz, L - 0.06, L, 0.05, o.y1 + 0.01, o.y2 - 0.01, MADERA);
+                cajaOrientada(lista, hp[0], hp[1], ux, uz, 0.01, L, 0.03, o.y1 + alto / 2 - 0.02, o.y1 + alto / 2 + 0.02, MADERA);
+                if (!o.bloqueada) cajaOrientada(lista, hp[0], hp[1], ux, uz, L - 0.22, L - 0.08, 0.09, o.y1 + alto / 2 - 0.2, o.y1 + alto / 2 - 0.12, COLOR_METAL);   // manija
+                if (!o.rota) cajaOrientada(vidrios, hp[0], hp[1], ux, uz, 0.01, L, 0.02, o.y1 + 0.07, o.y2 - 0.07, COLOR_VIDRIO);
+            }
+            if (o.rota && !o.abierta) {
+                // vidrios rotos que quedan clavados en el marco (puntas hacia arriba abajo y hacia abajo arriba)
+                for (let i = 0; i < 9; i++) {
+                    const s0 = Math.max(0.02, (i + 0.5) / 9 * o.ancho - 0.05), s1 = Math.min(o.ancho - 0.02, s0 + 0.09);
+                    const h1 = 0.06 + ((i * 37 + 11) % 7) / 7 * 0.16, h2 = 0.05 + ((i * 53 + 5) % 6) / 6 * 0.14;
+                    cajaOrientada(lista, o.a0[0], o.a0[1], o.u[0], o.u[1], s0, s1, 0.02, o.y1 + 0.07, o.y1 + 0.07 + h1, COLOR_VIDRIO_ROTO);
+                    cajaOrientada(lista, o.a0[0], o.a0[1], o.u[0], o.u[1], s0, s1, 0.02, o.y2 - 0.07 - h2, o.y2 - 0.07, COLOR_VIDRIO_ROTO);
+                }
+            }
+            if (o.bloqueada) {
+                // tablones clavados por adentro: se ve que no se puede abrir
+                const bx = o.a0[0] - o.u[0] * 0.12 + o.dentro[0] * 0.19, bz = o.a0[1] - o.u[1] * 0.12 + o.dentro[1] * 0.19;
+                [0.1, 0.5, 0.9].forEach(function (f, i) {
+                    cajaOrientada(lista, bx, bz, o.u[0], o.u[1], 0, o.ancho + 0.24, 0.05, o.y1 + f * (alto - 0.2) , o.y1 + f * (alto - 0.2) + 0.18, i === 1 ? [0.40, 0.27, 0.16] : [0.34, 0.22, 0.13]);
+                });
+            }
+        }
+        vidriosListos = vidrios;
+        if (lista.length === 0) return;
+        configurarAtributos(bufferAberturas);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(lista), gl.DYNAMIC_DRAW);
+        gl.drawArrays(gl.TRIANGLES, 0, lista.length / 6);
+    }
+
+    // Los vidrios van al final y translúcidos (se ve a través de ellos)
+    function dibujarVidrios() {
+        if (vidriosListos.length === 0) return;
+        gl.enable(gl.BLEND);
+        gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ZERO, gl.ONE);   // no toca el alfa de la pantalla
+        gl.depthMask(false);
+        gl.uniform1f(uAlfa, 0.3);
+        configurarAtributos(bufferVidrios);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vidriosListos), gl.DYNAMIC_DRAW);
+        gl.drawArrays(gl.TRIANGLES, 0, vidriosListos.length / 6);
+        gl.uniform1f(uAlfa, 1);
+        gl.depthMask(true);
+        gl.disable(gl.BLEND);
     }
 
     // ----- Pantalla -----
@@ -3239,6 +3765,7 @@ if (!gl) {
         invFondo.classList.remove("visible");
         const ok = function (id) { return typeof id === "string" && ITEMS[id] ? id : null; };
         if (datos && typeof datos === "object") {
+            if (datos.aberturas) aplicarEstados(datos.aberturas, true);
             (datos.barra || []).slice(0, BARRA_N).forEach(function (id, i) { inv.barra[i] = ok(id); });
             for (const k in (datos.equipo || {})) {
                 if (ok(datos.equipo[k]) && ITEMS[datos.equipo[k]].slot === k) inv.equipo[k] = datos.equipo[k];
@@ -3280,6 +3807,18 @@ if (!gl) {
                     return it;
                 })
                 : MUNDO_INICIAL.map(function (m) { return Object.assign({}, m); });
+            // partidas guardadas antes de las llaves: aparecen las llaves una sola vez (si no, las puertas con llave quedarían imposibles)
+            if (!(datos.v >= 3) && Array.isArray(datos.mundo)) {
+                MUNDO_INICIAL.forEach(function (m) {
+                    if (/^llave\d+$/.test(m.id)) inv.mundo.push(Object.assign({}, m));
+                });
+            }
+            // partidas guardadas antes de las vendas: aparecen una sola vez
+            if (!(datos.v >= 4) && Array.isArray(datos.mundo)) {
+                MUNDO_INICIAL.forEach(function (m) {
+                    if (m.id === "venda") inv.mundo.push(Object.assign({}, m));
+                });
+            }
             // partidas guardadas antes de los combates: aparecen los objetos nuevos una sola vez
             if (datos.v !== 2 && Array.isArray(datos.mundo)) {
                 MUNDO_INICIAL.forEach(function (m) {
@@ -3296,7 +3835,8 @@ if (!gl) {
 
     function exportarInventario() {
         return {
-            v: 2,
+            v: 4,
+            aberturas: estadoAberturas(),
             barra: inv.barra.slice(),
             equipo: Object.assign({}, inv.equipo),
             manoD: inv.manoD,
@@ -3312,8 +3852,16 @@ if (!gl) {
     const FORMA_ITEM = {   // [ancho, alto, largo] (los largos son los que van acostados)
         palo: [0.1, 0.1, 0.8], cuchillo: [0.07, 0.04, 0.4], hacha: [0.12, 0.08, 0.6], muletas: [0.12, 0.08, 0.9],
         mochila: [0.4, 0.3, 0.3], camisa: [0.4, 0.08, 0.36], pantalon: [0.34, 0.08, 0.5], gorra: [0.28, 0.14, 0.3],
-        botas: [0.3, 0.16, 0.34], agua: [0.14, 0.3, 0.14], comida: [0.2, 0.14, 0.2], jarabe: [0.14, 0.22, 0.14], anabolico: [0.08, 0.06, 0.22]
+        botas: [0.3, 0.16, 0.34], agua: [0.14, 0.3, 0.14], comida: [0.2, 0.14, 0.2], jarabe: [0.14, 0.22, 0.14], anabolico: [0.08, 0.06, 0.22], venda: [0.2, 0.08, 0.2]
     };
+    // Las llaves: una por cada casa cerrada, cada una con el color de su candado
+    for (let i = 0; i < 40; i++) {
+        const cl = COLORES_LLAVE[i % COLORES_LLAVE.length];
+        const nombre = cl.n + (i >= COLORES_LLAVE.length ? " " + (Math.floor(i / COLORES_LLAVE.length) + 1) : "");
+        ITEMS["llave" + i] = { n: "Llave " + nombre, e: "🔑", llave: true, color: nombre, d: "Abre la puerta de entrada con el candado " + nombre + "." };
+        COLOR_ITEM["llave" + i] = cl.c;
+        FORMA_ITEM["llave" + i] = [0.07, 0.03, 0.24];
+    }
     const bufferItems = gl.createBuffer();
     function dibujarItems(t) {
         if (!sv.activo || inv.mundo.length === 0) return;
@@ -3496,8 +4044,9 @@ if (!gl) {
         if (sv.hambre <= 0) dano += SV_CONFIG.danoHambrePorDia;
         if (nT === -3 || nT === 3) dano += 30;                // congelamiento o golpe de calor
         if (dano > 0) sv.salud -= dano * dtDias;
+        if (sv.sangrado > 0) sv.salud -= SANGRADO_POR_SEG[sv.sangrado] * dtSeg;       // heridas abiertas
         if (sv.salud > techo) sv.salud = Math.max(techo, sv.salud - 3 * dtSeg);
-        else if (bien && dano === 0 && sv.salud < techo) sv.salud = Math.min(techo, sv.salud + SV_CONFIG.regeneracionSalud * dtSeg);
+        else if (bien && dano === 0 && sv.sangrado === 0 && sv.salud < techo) sv.salud = Math.min(techo, sv.salud + SV_CONFIG.regeneracionSalud * dtSeg);
 
         // Sombras y cordura
         const sombraCerca = actualizarSombras(dtSeg);
@@ -3518,7 +4067,7 @@ if (!gl) {
 
         // Muerte
         if (sv.salud <= 0) {
-            morir(sv.sed <= 0 ? "Moriste de sed." : sv.hambre <= 0 ? "Moriste de hambre." : nT === -3 ? "Moriste congelado." : nT === 3 ? "Moriste por un golpe de calor." : "Tu cuerpo no resistió.");
+            morir(sv.sed <= 0 ? "Moriste de sed." : sv.hambre <= 0 ? "Moriste de hambre." : nT === -3 ? "Moriste congelado." : nT === 3 ? "Moriste por un golpe de calor." : sv.sangrado > 0 ? "Te desangraste." : "Tu cuerpo no resistió.");
         } else if (sv.sueno <= 0) {
             morir("Pasaste 7 días sin dormir.");
         }
@@ -3537,6 +4086,16 @@ if (!gl) {
         const cerca = !sv.durmiendo && !inv.abierto && cercaDeCama();
         cartelCama.style.display = cerca ? "block" : "none";
         if (cerca) cartelCama.textContent = tactil ? "Dormir" : "E: dormir";
+        const ab = (!sv.durmiendo && !inv.abierto && sv.vivo) ? aberturaCercana() : null;
+        const txtAb = ab ? textoAbertura(ab, tactil) : null;
+        botonAbertura.style.display = txtAb ? "block" : "none";
+        if (txtAb) botonAbertura.textContent = txtAb;
+        // pasar por una ventana abierta o rota: botón redondo en el celu, cartel en la compu
+        const vp = (!sv.durmiendo && !inv.abierto && sv.vivo) ? aberturaCercana(esPasable) : null;
+        const verPasar = !!(vp || pasoVentana);
+        if (botonPasarVentana) botonPasarVentana.style.visibility = verPasar ? "visible" : "hidden";
+        botonAbertura2.style.display = (verPasar && !tactil) ? "block" : "none";
+        if (verPasar && !tactil) botonAbertura2.textContent = "R: pasar por la ventana";
         return sv.velocidad;
     }
 
@@ -3561,7 +4120,7 @@ if (!gl) {
         return {
             salud: sv.salud, saludMax: sv.saludMax, cordura: sv.cordura, corduraMax: sv.corduraMax,
             sed: sv.sed, hambre: sv.hambre, sueno: sv.sueno,
-            enf: sv.enf, cron: sv.cron, anabolico: sv.anabolico,
+            enf: sv.enf, cron: sv.cron, anabolico: sv.anabolico, sangrado: sv.sangrado,
             piernas: sv.piernas.map(function (p) { return { n: p.n, t: p.t }; })
         };
     }
@@ -3662,6 +4221,10 @@ if (!gl) {
             if (Math.abs((j.y || 0) - saltoY) > 1.2) continue;
             if (d < mejorD) { mejorD = d; mejor = oid; }
         }
+        if (mejor === null) {                      // si no le pegás a nadie, y apuntás a una ventana cerrada, la rompés
+            const v = ventanaApuntada(arma.alcance);
+            if (v) romperVentana(v);
+        }
         if (mejor !== null && conexion && conexion.readyState === WebSocket.OPEN) {
             conexion.send(JSON.stringify({ tipo: "golpe", a: Number(mejor), arma: conArma ? id : "puno", f: Math.max(0.3, Math.min(1, sv.fuerza)) }));
         }
@@ -3697,6 +4260,9 @@ if (!gl) {
 
     // Botones del celular
     let botonesTactiles = null;
+    let botonPasarVentana = null;       // botón redondo para pasar por una ventana (solo aparece cerca de una abierta o rota)
+    const ICONO_PASAR = '<svg viewBox="0 0 64 64" width="62%" height="62%"><g stroke="#fff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" fill="none">' +
+        '<circle cx="44" cy="22" r="6" fill="#fff"/><path d="M38 30 L24 38 L8 34 M24 38 L30 54 M32 34 L52 42"/></g></svg>';
     if ("ontouchstart" in window) {
         const mini = "";
         const hacer = function (texto, estilo, accion) {
@@ -3713,6 +4279,8 @@ if (!gl) {
             agachar: nuevo("agachar", "Agachar", true, 1.9, 2.75, alternarAgachar),
             arrastrar: nuevo("arrastrar", "Arrastrar", true, 0.3, 2.75, alternarArrastrar)
         };
+        botonPasarVentana = hacer(ICONO_PASAR, "visibility:hidden;", pasarPorVentana);
+        registrarBoton("pasar", "Pasar", botonPasarVentana, 1.4, true, 2.3, 0.6);       // a la izquierda de Saltar
     }
     function actualizarBotonesTactiles() {
         if (!botonesTactiles) return;
@@ -3826,9 +4394,11 @@ if (!gl) {
         gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
         configurarAtributos(buffer);
         gl.drawArrays(gl.TRIANGLES, 0, cantidad);
+        dibujarAberturas();
         dibujarOtros();
         dibujarItems(ahora / 1000);
         dibujarSombras();
+        dibujarVidrios();
         dibujarMano(proyeccion, ahora / 1000);
         dibujarMapa();
     }
@@ -3852,6 +4422,7 @@ if (!gl) {
         }
         tCongelado = null;
 
+        actualizarAberturas(dt);
         const multEstacion = actualizarEstaciones(dt, msReales);
         const multSupervivencia = actualizarSupervivencia(dt, msReales);
 
@@ -3944,12 +4515,20 @@ if (!gl) {
         const yAntes = saltoY;
         velY -= GRAVEDAD * dt;
         saltoY += velY * dt;
+        if (velY > 0) {
+            // el techo (y los cabezales) te frenan la cabeza: no se atraviesan saltando
+            const tope = limiteCabeza(px, pz, yAntes, saltoY);
+            if (tope !== null) { saltoY = Math.max(yAntes, tope); velY = 0; }
+        }
         const piso = alturaSuelo(px, pz, yAntes);
         if (saltoY <= piso) {
             aterrizar(-velY);     // daño, esguinces y fracturas según la caída
             saltoY = piso;
             velY = 0;
         }
+
+        actualizarCruce(dt);                       // cruzando una ventana
+        actualizarVidrios(dt, seMueve);            // sacando vidrios
 
         // Cámara: más baja agachado o arrastrándote, y con un vaivén si rengueás
         const alturaObj = postura === 2 ? 0.45 : postura === 1 ? 1.05 : altura;

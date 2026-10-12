@@ -195,7 +195,11 @@ const servidor = http.createServer(function (req, res) {
                     reloj: Estaciones.crearReloj({ estacionInicial: estacionInicial }),
                     semilla: crypto.randomInt(1, 2147483647),   // de acá sale el mapa: todos los jugadores ven el mismo
                     pausada: false, pausadaDesde: null, pausadoPor: null,
-                    aberturas: {}      // estado de puertas y ventanas: { "p3": [abierta, trabada] }
+                    aberturas: {},     // estado de puertas y ventanas: { "p3": [abierta, trabada] }
+                    itemsRet: {},      // objetos del mapa original que ya se llevaron: { "i5": 1 }
+                    itemsSuel: {},     // objetos que alguien tiró: { "d3_1": { id, x, y, z, c } }
+                    autoridad: null,   // el jugador cuyo cliente maneja a los NPCs (si se va, pasa al siguiente)
+                    npcsSnap: null     // última foto de los NPCs (para el que entra después o toma el mando)
                 };
                 responder(res, 200, { id: id, token: salas[id].token });
             });
@@ -248,12 +252,16 @@ wss.on("connection", function (socket, req) {
     const id = siguienteId++;
     socket.jugadorId = id;
     let ultimoGolpe = 0;
+    let ultimoDice = 0;      // última vez que este jugador hizo hablar a un NPC (respuestas de internet)
     sala.sockets.add(socket);
     sala.vacioDesde = null;
     sala.jugadores[id] = { x: 0, z: 9, yaw: 0, y: 0, c: id % 6, n: limpiar(params.get("nombre"), 20) || "Jugador" };
+    if (!sala.autoridad || !sala.sockets.has(sala.autoridad)) sala.autoridad = socket;
     socket.send(JSON.stringify({
         tipo: "hola", id: id, reloj: sala.reloj, semilla: sala.semilla, ahora: Date.now(),
-        pausada: sala.pausada, host: sala.host, aberturas: sala.aberturas
+        pausada: sala.pausada, host: sala.host, aberturas: sala.aberturas,
+        items: { ret: Object.keys(sala.itemsRet), suel: sala.itemsSuel },
+        npcs: sala.npcsSnap, autoridad: sala.autoridad === socket
     }));
 
     socket.on("message", function (mensaje) {
@@ -272,6 +280,127 @@ wss.on("connection", function (socket, req) {
                 const aviso = JSON.stringify({ tipo: "abertura", k: datos.k, a: a, t: t });
                 for (const otro of sala.sockets) {
                     if (otro !== socket && otro.readyState === WebSocket.OPEN) otro.send(aviso);
+                }
+                return;
+            }
+            if (datos.tipo === "soltar") {
+                // alguien tiró un objeto: queda guardado en la sala y lo ven todos
+                if (typeof datos.k !== "string" || !/^d\d{1,7}_\d{1,7}$/.test(datos.k)) return;
+                if (typeof datos.id !== "string" || !/^[a-z]{1,12}\d{0,2}$/.test(datos.id)) return;
+                if (![datos.x, datos.y, datos.z].every(function (v) { return typeof v === "number" && isFinite(v); })) return;
+                if (Math.abs(datos.x) > 100 || Math.abs(datos.z) > 100 || datos.y < -1 || datos.y > 30) return;
+                if (sala.itemsSuel[datos.k] || Object.keys(sala.itemsSuel).length >= 500) return;
+                const it = { id: datos.id, x: datos.x, y: datos.y, z: datos.z };
+                if (Array.isArray(datos.c) && datos.c.length <= 12 &&
+                    datos.c.every(function (q) { return q === null || (typeof q === "string" && /^[a-z]{1,12}\d{0,2}$/.test(q)); })) it.c = datos.c;
+                sala.itemsSuel[datos.k] = it;
+                const aviso = JSON.stringify({ tipo: "soltar", k: datos.k, id: it.id, x: it.x, y: it.y, z: it.z, c: it.c || null });
+                for (const otro of sala.sockets) {
+                    if (otro !== socket && otro.readyState === WebSocket.OPEN) otro.send(aviso);
+                }
+                return;
+            }
+            if (datos.tipo === "recoger") {
+                // alguien levantó un objeto: desaparece para todos (el primero que llega se lo queda)
+                if (typeof datos.k !== "string" || !/^[id]\d{1,7}(_\d{1,7})?$/.test(datos.k)) return;
+                if (datos.k[0] === "d") {
+                    if (!sala.itemsSuel[datos.k]) return;
+                    delete sala.itemsSuel[datos.k];
+                } else {
+                    if (sala.itemsRet[datos.k] || Object.keys(sala.itemsRet).length >= 600) return;
+                    sala.itemsRet[datos.k] = 1;
+                }
+                const aviso = JSON.stringify({ tipo: "recoger", k: datos.k });
+                for (const otro of sala.sockets) {
+                    if (otro !== socket && otro.readyState === WebSocket.OPEN) otro.send(aviso);
+                }
+                return;
+            }
+            if (datos.tipo === "npcs") {
+                // solo el que manda sobre los NPCs puede decir dónde están: se guarda y se reenvía a los demás
+                if (sala.autoridad !== socket || !Array.isArray(datos.n) || datos.n.length > 200) return;
+                if (!datos.n.every(function (a) { return Array.isArray(a) && a.length <= 12 && a.every(function (v) { return typeof v === "number" && isFinite(v); }); })) return;
+                sala.npcsSnap = datos.n;
+                const aviso = JSON.stringify({ tipo: "npcs", n: datos.n });
+                for (const otro of sala.sockets) {
+                    if (otro !== socket && otro.readyState === WebSocket.OPEN) otro.send(aviso);
+                }
+                return;
+            }
+            if (datos.tipo === "npchabla") {
+                if (sala.autoridad !== socket || !Number.isInteger(datos.i)) return;
+                const aviso = JSON.stringify({ tipo: "npchabla", i: datos.i, t: limpiar(datos.t, 100) });
+                for (const otro of sala.sockets) {
+                    if (otro !== socket && otro.readyState === WebSocket.OPEN) otro.send(aviso);
+                }
+                return;
+            }
+            if (datos.tipo === "npcdice") {
+                // un jugador (que no maneja a los NPCs) le preguntó algo a un NPC y la respuesta vino de internet: todos ven al NPC contestar
+                const yo = sala.jugadores[id];
+                const ahora = Date.now();
+                if (!yo || sala.pausada || sala.autoridad === socket || !Number.isInteger(datos.i) || !sala.npcsSnap) return;
+                const npc = sala.npcsSnap[datos.i];
+                if (!npc || ahora - ultimoDice < 2000) return;
+                if (Math.hypot(yo.x - npc[0], yo.z - npc[1]) > 14) return;     // tiene que estar cerca del NPC (la posición la pone el servidor)
+                const texto = limpiar(datos.t, 100);
+                if (!texto) return;
+                ultimoDice = ahora;
+                const aviso = JSON.stringify({ tipo: "npchabla", i: datos.i, t: texto });
+                for (const otro of sala.sockets) {
+                    if (otro !== socket && otro.readyState === WebSocket.OPEN) otro.send(aviso);
+                }
+                return;
+            }
+            if (datos.tipo === "npcdano") {
+                // un NPC le pegó a un jugador (lo decide el que manda sobre los NPCs)
+                if (sala.autoridad !== socket || sala.pausada) return;
+                const dano = Math.max(0, Math.min(15, Number(datos.d) || 0));
+                if (dano <= 0) return;
+                for (const otro of sala.sockets) {
+                    if (otro.jugadorId === Number(datos.a) && otro.readyState === WebSocket.OPEN) {
+                        otro.send(JSON.stringify({ tipo: "golpe", de: 0, nombre: "el dueño de la casa", dano: dano }));
+                    }
+                }
+                return;
+            }
+            if (datos.tipo === "npcgolpe") {
+                // un jugador le pegó a un NPC: el servidor calcula el daño y se lo pasa al que maneja a los NPCs
+                const yo = sala.jugadores[id];
+                const arma = ARMAS[datos.arma];
+                const ahora = Date.now();
+                if (sala.pausada || !yo || !arma || !sala.autoridad || sala.autoridad === socket) return;
+                if (!Number.isInteger(datos.i) || datos.i < 0) return;
+                if (ahora - ultimoGolpe < arma.espera * 0.8) return;
+                const npc = sala.npcsSnap && sala.npcsSnap[datos.i];
+                if (npc && Math.hypot(yo.x - npc[0], yo.z - npc[1]) > arma.alcance + 0.5) return;
+                ultimoGolpe = ahora;
+                const fuerza = Math.max(0.3, Math.min(1, Number(datos.f) || 1));
+                if (sala.autoridad.readyState === WebSocket.OPEN) {
+                    sala.autoridad.send(JSON.stringify({ tipo: "npcgolpe", i: datos.i, dano: arma.dano * fuerza, de: id }));
+                }
+                return;
+            }
+            if (datos.tipo === "vozdice") {
+                // un jugador le habló a los NPCs: se le pasa la intención y el volumen al que los maneja (la posición la pone el servidor)
+                const yo = sala.jugadores[id];
+                const intenciones = ["amenaza", "insulto", "calma", "ayuda", "saludo", "gracias", "despedida", "pregunta", "desconocido"];
+                if (!yo || !sala.autoridad || sala.autoridad === socket || sala.pausada) return;
+                if (intenciones.indexOf(datos.intent) < 0 || typeof datos.r !== "number" || !isFinite(datos.r)) return;
+                if (sala.autoridad.readyState === WebSocket.OPEN) {
+                    sala.autoridad.send(JSON.stringify({
+                        tipo: "vozdice", de: id, intent: datos.intent, r: Math.max(0, Math.min(22, datos.r)),
+                        g: datos.g ? 1 : 0, t: limpiar(datos.t, 140), x: yo.x, z: yo.z
+                    }));
+                }
+                return;
+            }
+            if (datos.tipo === "robo") {
+                // alguien se llevó algo de una casa: se le avisa al que maneja a los NPCs para que reaccionen
+                if (!sala.autoridad || sala.autoridad === socket) return;
+                if (typeof datos.x !== "number" || typeof datos.z !== "number") return;
+                if (sala.autoridad.readyState === WebSocket.OPEN) {
+                    sala.autoridad.send(JSON.stringify({ tipo: "robo", de: id, x: datos.x, z: datos.z }));
                 }
                 return;
             }
@@ -327,6 +456,16 @@ wss.on("connection", function (socket, req) {
 
     socket.on("close", function () {
         sala.sockets.delete(socket);
+        if (sala.autoridad === socket) {
+            sala.autoridad = null;
+            for (const otro of sala.sockets) {
+                if (otro.readyState === WebSocket.OPEN) {
+                    sala.autoridad = otro;
+                    try { otro.send(JSON.stringify({ tipo: "autoridad", si: true })); } catch (e) {}
+                    break;
+                }
+            }
+        }
         if (sala.pausada && sala.pausadoPor === socket) reanudarSala(sala);
         delete sala.jugadores[id];
         if (sala.sockets.size === 0) sala.vacioDesde = Date.now();

@@ -108,6 +108,7 @@ if (!gl) {
     const ALTO_PARED = 3;
     let CALLES = [];                        // [x1, z1, x2, z2]
     let CASAS = [];                         // [x1, z1, x2, z2]
+    let NPCS = [];                          // gente que vive adentro de las casas
     let CAMAS = [];                         // [x1, z1, x2, z2]
     let MUNDO_INICIAL = [];                 // objetos sueltos { id, x, y, z }
     let SPAWN = { x: 0, z: 9, yaw: 0 };
@@ -141,7 +142,7 @@ if (!gl) {
         datos.length = 0;
         colisiones.length = 0;
         CALLES = []; CASAS = []; CAMAS = []; MUNDO_INICIAL = [];
-        PUERTAS = []; VENTANAS = [];
+        PUERTAS = []; VENTANAS = []; NPCS = [];
 
         const R = crearAzar(semilla);
         const rnd = function (a, b) { return a + R() * (b - a); };
@@ -391,6 +392,70 @@ if (!gl) {
             intentarMueble({ n: "cama", a: 2, b: 2.6, h: 0.5, c: [0.6, 0.3, 0.3] });
             const cuantos = ent(3, 7);
             for (let i = 0; i < cuantos; i++) intentarMueble(elegir(tipos));
+
+            // NPCs: 0 a 2 personas por casa, paradas o paseando por adentro (nunca en la entrada ni en el pasillo de la pared de adentro)
+            {
+                const RN = crearAzar((semilla ^ Math.imul(idCasa + 1, 0x9e3779b1)) >>> 0);
+                const rn = function (a, b) { return a + RN() * (b - a); };
+                const libreNpc = function (lx, lz) {
+                    if (lx < -w + t + 0.55 || lx > w - t - 0.55 || lz < -d + t + 0.55 || lz > d - t - 0.55) return false;
+                    if (prohibido.some(function (q) { return lx > q[0] - 0.4 && lx < q[2] + 0.4 && lz > q[1] - 0.4 && lz < q[3] + 0.4; })) return false;
+                    if (locales.some(function (m) { return lx > m[0] - 0.45 && lx < m[2] + 0.45 && lz > m[1] - 0.45 && lz < m[3] + 0.45; })) return false;
+                    return true;
+                };
+                const caminoLibre = function (ax, az, bx, bz) {
+                    const n = Math.max(2, Math.ceil(Math.hypot(bx - ax, bz - az) / 0.25));
+                    for (let i = 1; i <= n; i++) {
+                        if (!libreNpc(ax + (bx - ax) * i / n, az + (bz - az) * i / n)) return false;
+                    }
+                    return true;
+                };
+                const r0 = RN();
+                const cuantosNpc = r0 < 0.2 ? 0 : (r0 < 0.7 || W * D < 90) ? 1 : 2;
+                const ropa = [["camisa", [0.30, 0.50, 0.80]], ["pantalon", [0.25, 0.30, 0.60]], ["gorra", [0.70, 0.20, 0.20]], ["botas", [0.40, 0.25, 0.12]]];
+                const pieles = [[0.85, 0.65, 0.50], [0.70, 0.50, 0.36], [0.55, 0.38, 0.27], [0.92, 0.76, 0.62], [0.45, 0.30, 0.22]];
+                const propios = [];
+                for (let i = 0; i < cuantosNpc; i++) {
+                    for (let k = 0; k < 60; k++) {
+                        const lx = rn(-w + t + 0.6, w - t - 0.6), lz = rn(-d + t + 0.6, d - t - 0.6);
+                        if (!libreNpc(lx, lz)) continue;
+                        if (propios.some(function (o) { return Math.hypot(o.lx - lx, o.lz - lz) < 1.5; })) continue;
+                        const eq = {};
+                        if (RN() < 0.8) eq.torso = "camisa";
+                        if (RN() < 0.7) eq.piernas = "pantalon";
+                        if (RN() < 0.4) eq.cabeza = "gorra";
+                        if (RN() < 0.5) eq.pies = "botas";
+                        const wp = T(lx, lz);
+                        const O = T(0, 0), ex = T(1, 0), ez = T(0, 1);
+                        const exv = [ex[0] - O[0], ex[1] - O[1]], ezv = [ez[0] - O[0], ez[1] - O[1]];
+                        const rt = RN();
+                        // carácter: agresivo (te ataca apenas entrás), defensor (tolera hasta que le robás o le pegás),
+                        // cobarde (se escapa al fondo), pacífico (no te hace nada ni así)
+                        const tipo = rt < 0.35 ? "agresivo" : rt < 0.60 ? "defensor" : rt < 0.80 ? "cobarde" : "pacifico";
+                        const npc = {
+                            tipo: tipo, hp: { agresivo: 45, defensor: 40, cobarde: 25, pacifico: 30 }[tipo],
+                            i: NPCS.length, oyeVoz: false, distVoz: 0, calmaPor: {}, asustadoPor: {}, confPor: {}, dio: false, golpeSeq: 0, ofendidoPor: {}, golpeadoPor: {}, caido: false, blanco: null,
+                            alerta: 0, cd: 0, pendiente: 0, golpeT: 99, habloMs: -1e9, vel: 0, giroHuida: 0,
+                            aLocal: function (wx, wz) {
+                                return [(wx - O[0]) * exv[0] + (wz - O[1]) * exv[1], (wx - O[0]) * ezv[0] + (wz - O[1]) * ezv[1]];
+                            },
+                            libreMov: function (qx, qz) {       // para perseguir o huir: solo paredes y muebles (la entrada sí se puede pisar)
+                                if (qx < -w + t + 0.4 || qx > w - t - 0.4 || qz < -d + t + 0.4 || qz > d - t - 0.4) return false;
+                                return !locales.some(function (m) { return qx > m[0] - 0.4 && qx < m[2] + 0.4 && qz > m[1] - 0.4 && qz < m[3] + 0.4; });
+                            },
+                            casa: idCasa, T: T, libre: libreNpc, camino: caminoLibre, w: w, d: d, t: t,
+                            lx: lx, lz: lz, x: wp[0], z: wp[1], tx: lx, tz: lz,
+                            estado: "para", espera: rn(0.5, 5),
+                            cuerpo: RN() * 6.283, giroCab: 0, fase: RN() * 6, mov: 0,
+                            base: pieles[Math.floor(RN() * pieles.length)], eq: eq,
+                            col: colisionSola(wp[0] - 0.3, 0, wp[1] - 0.3, wp[0] + 0.3, 1.8, wp[1] + 0.3)
+                        };
+                        propios.push(npc);
+                        NPCS.push(npc);
+                        break;
+                    }
+                }
+            }
 
             const rm = rectMundo(-w, -d, w, d);
             CASAS.push(rm);
@@ -1066,6 +1131,14 @@ if (!gl) {
 
         // Conexión con el servidor (solo cuando entrás a un servidor desde el menú)
     let conexion = null;
+    let soyAutoridad = false;           // ¿mi cliente maneja a los NPCs? (uno solo por servidor; si se va, pasa al siguiente)
+    let itemsRed = { ret: {}, suel: {} };   // objetos del mapa que ya se llevaron (i#) y objetos tirados por jugadores (d#_#)
+    let snapHola = null, snapNpcs = null, snapNuevo = false;
+    let contSuelto = 0, acumFotoNpc = 0;
+    function enviarRed(o) {
+        if (conexion && conexion.readyState === WebSocket.OPEN) { try { conexion.send(JSON.stringify(o)); } catch (e) {} }
+    }
+    function esAutoridad() { return !conexion || soyAutoridad; }
 
     window.desconectarServidor = function () {
         if (conexion) {
@@ -1076,6 +1149,9 @@ if (!gl) {
         }
         miId = null;
         otros = {};
+        soyAutoridad = false;
+        itemsRed = { ret: {}, suel: {} };
+        snapHola = null; snapNpcs = null; snapNuevo = false;
     };
 
     window.conectarServidor = function (sala, nombre, alEntrar, alFallar) {
@@ -1119,6 +1195,13 @@ if (!gl) {
                         });
                     }
                     if (mensaje.aberturas) aplicarEstados(mensaje.aberturas, true);
+                    soyAutoridad = !!mensaje.autoridad;
+                    itemsRed = { ret: {}, suel: {} };
+                    if (mensaje.items) {
+                        (mensaje.items.ret || []).forEach(function (k) { itemsRed.ret[k] = 1; });
+                        itemsRed.suel = mensaje.items.suel || {};
+                    }
+                    snapHola = Array.isArray(mensaje.npcs) ? mensaje.npcs : null;
                     if (mensaje.pausada && window.alPausaRemota) window.alPausaRemota(true, mensaje.host);
                     alEntrar();
                 }
@@ -1134,6 +1217,14 @@ if (!gl) {
                 if (mensaje.tipo === "jugadores") otros = mensaje.jugadores;
                 if (mensaje.tipo === "abertura") aplicarEstados({ [mensaje.k]: [mensaje.a, mensaje.t] }, false, true);
                 if (mensaje.tipo === "golpe") recibirGolpe(mensaje.dano, mensaje.nombre);
+                if (mensaje.tipo === "soltar") redItemPuesto(mensaje);
+                if (mensaje.tipo === "recoger") redItemSacado(mensaje.k);
+                if (mensaje.tipo === "npcs") { snapNpcs = mensaje.n; snapNuevo = true; }
+                if (mensaje.tipo === "autoridad") tomarMandoNpcs();
+                if (mensaje.tipo === "npcgolpe" && esAutoridad()) { const nn = NPCS[mensaje.i]; if (nn) golpearNpc(nn, mensaje.dano, String(mensaje.de)); }
+                if (mensaje.tipo === "robo" && esAutoridad()) robarNpcs(String(mensaje.de), mensaje.x, mensaje.z);
+                if (mensaje.tipo === "npchabla") mostrarHablaNpc(mensaje.i, mensaje.t);
+                if (mensaje.tipo === "vozdice" && esAutoridad()) reaccionarVoz(String(mensaje.de), mensaje.x, mensaje.z, mensaje.intent, mensaje.r, !!mensaje.g, String(mensaje.t || "").slice(0, 140));
                 if (mensaje.tipo === "cerrado") {
                     cerradoPorHost = true;
                     if (!window.cerrandoMiServidor) alert("El host cerró el servidor");
@@ -1607,6 +1698,7 @@ if (!gl) {
         reiniciarAberturas();
         iniciarSupervivencia(config.supervivencia);
         iniciarInventario(config.inventario);
+        importarMemoriaNpcs(config.modo === "offline" ? config.memoriaNpcs : null);
     };
 
     // Tiempo jugado (para guardarlo en la partida offline)
@@ -2163,6 +2255,7 @@ if (!gl) {
             if (inv.abierto) cerrarInventario(); else abrirInventario();
         }
         if (e.code === "KeyB" && !inv.abierto) alternarBaile();
+        if (e.code === "KeyV" && !e.repeat) alternarMicrofono();
         if (/^Digit[1-7]$/.test(e.code)) tocarBarra(parseInt(e.code.slice(5), 10) - 1, true);
         if (DEBUG_SV) {
             if (e.code === "KeyJ") sv.sed = 100;
@@ -2502,8 +2595,46 @@ if (!gl) {
         const suelto = { id: id, x: x, y: alturaSuelo(x, z, saltoY, 0.1), z: z };
         if (carga) suelto.c = carga;
         inv.mundo.push(suelto);
+        if (conexion && miId !== null) {          // en un servidor, lo tirado lo ven todos
+            suelto.k = "d" + miId + "_" + (++contSuelto);
+            itemsRed.suel[suelto.k] = { id: id, x: x, y: suelto.y, z: z, c: carga || null };
+            enviarRed({ tipo: "soltar", k: suelto.k, id: id, x: x, y: suelto.y, z: z, c: carga || null });
+        }
         inv.sel = null;
         refrescarInventario();
+    }
+
+    // ----- Objetos compartidos en un servidor -----
+    // Alguien tiró algo: aparece para todos
+    function redItemPuesto(m) {
+        if (!m || typeof m.k !== "string" || !ITEMS[m.id]) return;
+        const c = Array.isArray(m.c) ? m.c.slice(0, 12).map(function (q) { return typeof q === "string" && ITEMS[q] ? q : null; }) : null;
+        const it = { id: m.id, x: +m.x || 0, y: +m.y || 0, z: +m.z || 0, k: m.k };
+        if (c) it.c = c;
+        itemsRed.suel[m.k] = { id: it.id, x: it.x, y: it.y, z: it.z, c: c };
+        if (!inv.mundo.some(function (o) { return o.k === m.k; })) inv.mundo.push(it);
+    }
+    // Alguien levantó algo: desaparece para todos
+    function redItemSacado(k) {
+        if (typeof k !== "string") return;
+        if (k.charAt(0) === "i") itemsRed.ret[k] = 1; else delete itemsRed.suel[k];
+        const i = inv.mundo.findIndex(function (o) { return o.k === k; });
+        if (i >= 0) inv.mundo.splice(i, 1);
+    }
+    // Al entrar a un servidor: los objetos originales que quedan + los que tiraron
+    function aplicarItemsServidor() {
+        if (!conexion) return;
+        inv.mundo = [];
+        MUNDO_INICIAL.forEach(function (m, i) {
+            if (!itemsRed.ret["i" + i]) inv.mundo.push(Object.assign({}, m, { k: "i" + i }));
+        });
+        for (const k in itemsRed.suel) {
+            const sl = itemsRed.suel[k];
+            if (!sl || !ITEMS[sl.id]) continue;
+            const it = { id: sl.id, x: +sl.x || 0, y: +sl.y || 0, z: +sl.z || 0, k: k };
+            if (Array.isArray(sl.c)) it.c = sl.c.map(function (q) { return typeof q === "string" && ITEMS[q] ? q : null; });
+            inv.mundo.push(it);
+        }
     }
 
     // Objeto del mapa que tenés al alcance (o null)
@@ -2521,8 +2652,10 @@ if (!gl) {
         const it = itemCercano();
         if (!it) return false;
         if (agregarItem(it.id, it.c)) {
-            inv.mundo.splice(inv.mundo.indexOf(it), 1);
+            if (conexion && it.k) { redItemSacado(it.k); enviarRed({ tipo: "recoger", k: it.k }); }
+            else inv.mundo.splice(inv.mundo.indexOf(it), 1);
             avisar("Recogiste: " + ITEMS[it.id].n, 2000);
+            alertarRobo();
         } else {
             avisar("No tenés lugar", 2000);
         }
@@ -3828,6 +3961,7 @@ if (!gl) {
         } else {
             inv.mundo = MUNDO_INICIAL.map(function (m) { return Object.assign({}, m); });
         }
+        aplicarItemsServidor();
         ajustarContenedores();
         hudBajo.style.display = "flex";
         pintarBarra();
@@ -3950,6 +4084,1382 @@ if (!gl) {
         configurarAtributos(bufferSombras);
         gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(lista), gl.DYNAMIC_DRAW);
         gl.drawArrays(gl.TRIANGLES, 0, lista.length / 6);
+    }
+
+    // ----- NPCs de las casas (viven adentro: se paran, pasean despacito y te miran si te acercás) -----
+    const bufferNpcs = gl.createBuffer();
+
+    // En un servidor, el cliente que "manda" (el primero que entró; si se va, el siguiente) hace pensar a los NPCs
+    // y le manda a los demás dónde están y qué hacen. Los otros solo los ven y los pueden golpear.
+    const ES_NPC = ["para", "camina", "alerta", "ataca", "huye", "quieto"];
+    function idPropio() { return miId === null ? "yo" : String(miId); }
+    function dentroCasa(i, x, z) {
+        const r = CASAS[i];
+        return !!r && x > r[0] + 0.2 && x < r[2] - 0.2 && z > r[1] + 0.2 && z < r[3] - 0.2;
+    }
+    // Todos los jugadores que los NPCs pueden ver: vos y los demás del servidor
+    function listaJugadores() {
+        const l = [{ id: idPropio(), x: px, z: pz, y: saltoY, yo: true, vivo: sv.vivo }];
+        for (const id in otros) {
+            if (id === String(miId)) continue;
+            const j = otros[id];
+            if (j && typeof j.x === "number" && typeof j.z === "number") l.push({ id: id, x: j.x, z: j.z, y: j.y || 0, yo: false, vivo: true });
+        }
+        return l;
+    }
+
+    let ultimoHablaNpc = 0;
+    function mostrarHablaNpc(i, texto) {
+        const n = NPCS[i];
+        if (!n || !texto || Math.hypot(px - n.x, pz - n.z) > 12) return;
+        avisar("💬 " + texto, Math.max(2600, Math.min(6000, texto.length * 60)));
+    }
+    function hablarNpc(n, texto, forzar) {
+        const ahoraMs = performance.now();
+        if (!forzar && (ahoraMs - n.habloMs < 4500 || ahoraMs - ultimoHablaNpc < 2200)) return;
+        n.habloMs = ahoraMs; ultimoHablaNpc = ahoraMs;
+        mostrarHablaNpc(n.i, texto);
+        enviarRed({ tipo: "npchabla", i: n.i, t: texto });
+    }
+    function elegirTexto(l) { return l[Math.floor(Math.random() * l.length)]; }
+
+    // Camina en coordenadas de la casa, deslizándose contra paredes y muebles. Devuelve true si se movió.
+    function moverNpc(n, dx, dz, paso) {
+        const intentos = [[dx, dz], [dx, 0], [0, dz]];
+        for (const q of intentos) {
+            const m = Math.hypot(q[0], q[1]);
+            if (m < 0.01) continue;
+            const nlx = n.lx + q[0] / m * paso, nlz = n.lz + q[1] / m * paso;
+            if (!n.libreMov(nlx, nlz)) continue;
+            const wp = n.T(nlx, nlz);
+            n.vx = wp[0] - n.x; n.vz = wp[1] - n.z;
+            n.lx = nlx; n.lz = nlz; n.x = wp[0]; n.z = wp[1];
+            return true;
+        }
+        return false;
+    }
+
+    // Le pegaron a un NPC (porId = quién): se ofende con esa persona y reacciona según su carácter
+    function golpearNpc(n, dano, porId) {
+        if (n.caido) return;
+        n.hp -= dano; n.ofendidoPor[porId] = true; n.golpeadoPor[porId] = true; if (n.confPor) delete n.confPor[porId];
+        if (n.hp <= 0) {
+            n.caido = true; n.estado = "quieto"; n.mov = 0; n.col[4] = -100;
+            if (porId === idPropio()) avisar("Lo dejaste fuera de combate", 2200);
+            return;
+        }
+        if (n.tipo === "cobarde") hablarNpc(n, elegirTexto(["¡Ay! ¡Por favor, parate!", "¡Basta, me voy a esconder!"]));
+        else if (n.tipo === "pacifico") hablarNpc(n, elegirTexto(["¡Basta, por favor! No quiero pelear.", "¿Por qué hacés esto?"]));
+        else hablarNpc(n, elegirTexto(["¡Me pegaste! ¡Ahora sí!", "¡Vas a pagar por eso!"]));
+    }
+
+    // Alguien (en (x, z)) se llevó algo de una casa: los que están ahí se enteran
+    function robarNpcs(idJ, x, z) {
+        if (typeof x !== "number" || typeof z !== "number") return;
+        for (const n of NPCS) {
+            if (n.caido || !dentroCasa(n.casa, x, z)) continue;
+            n.ofendidoPor[idJ] = true;
+            if (n.tipo === "defensor") hablarNpc(n, "¡Eso es mío! ¡Devolvelo!");
+            else if (n.tipo === "pacifico") hablarNpc(n, "Llevalo nomás, seguro lo necesitás más que yo.");
+            else if (n.tipo === "cobarde") hablarNpc(n, "¡Llevate lo que quieras, pero no me lastimes!");
+        }
+    }
+    // Agarraste algo: si manejás a los NPCs reaccionan directo; si no, se le avisa al que los maneja
+    function alertarRobo() {
+        if (esAutoridad()) robarNpcs(idPropio(), px, pz);
+        else enviarRed({ tipo: "robo", x: px, z: pz });
+    }
+
+    // ----- Fotos de los NPCs (lo que se manda por la red) -----
+    function r2(v) { return Math.round(v * 100) / 100; }
+    function fotoNpcs() {
+        return NPCS.map(function (n) {
+            return [r2(n.x), r2(n.z), r2(n.cuerpo), r2(n.giroCab), r2(n.mov), n.corre ? 1 : 0,
+                Math.max(0, ES_NPC.indexOf(n.estado)), n.caido ? 1 : 0, Math.round(n.hp), n.golpeSeq];
+        });
+    }
+    function aplicarFotoNpcs(arr, instantaneo) {
+        for (let i = 0; i < NPCS.length && i < arr.length; i++) {
+            const a = arr[i], n = NPCS[i];
+            if (!Array.isArray(a) || a.length < 10) continue;
+            n.sx = a[0]; n.sz = a[1]; n.scuerpo = a[2]; n.sgiro = a[3]; n.smov = a[4]; n.corre = !!a[5];
+            n.estado = ES_NPC[a[6]] || "para";
+            n.hp = a[8];
+            if (a[9] !== n.golpeSeq) { n.golpeSeq = a[9]; n.golpeT = 0; }
+            if (a[7] && !n.caido) { n.caido = true; n.estado = "quieto"; n.mov = 0; n.col[4] = -100; }
+            if (instantaneo) {
+                n.x = a[0]; n.z = a[1]; n.cuerpo = a[2]; n.giroCab = a[3]; n.mov = a[4];
+                const lp = n.aLocal(n.x, n.z);
+                n.lx = lp[0]; n.lz = lp[1]; n.tx = lp[0]; n.tz = lp[1];
+            }
+        }
+    }
+    // El que manejaba a los NPCs se fue: seguimos desde donde estaban
+    function tomarMandoNpcs() {
+        soyAutoridad = true;
+        for (const n of NPCS) {
+            const lp = n.aLocal(n.x, n.z);
+            n.lx = lp[0]; n.lz = lp[1]; n.tx = lp[0]; n.tz = lp[1];
+            if (!n.caido) { n.estado = "para"; n.espera = 1 + Math.random() * 3; }
+            n.cd = 1; n.pendiente = 0;
+        }
+    }
+    // Los que no manejan a los NPCs: los siguen suavemente
+    function actualizarNpcsRemotos(dt) {
+        if (snapNuevo && snapNpcs) { aplicarFotoNpcs(snapNpcs, false); snapNuevo = false; }
+        const k = Math.min(1, dt * 12);
+        for (const n of NPCS) {
+            if (n.sx === undefined) continue;
+            n.golpeT += dt;
+            n.x += (n.sx - n.x) * k; n.z += (n.sz - n.z) * k;
+            n.cuerpo += angDif(n.scuerpo, n.cuerpo) * k;
+            n.giroCab += (n.sgiro - n.giroCab) * Math.min(1, dt * 10);
+            n.mov += (n.smov - n.mov) * Math.min(1, dt * 10);
+            if (n.mov > 0.1) n.fase += dt * (n.corre ? 9 : 5.4);
+            if (!n.caido) { n.col[0] = n.x - 0.3; n.col[1] = n.z - 0.3; n.col[2] = n.x + 0.3; n.col[3] = n.z + 0.3; }
+        }
+    }
+
+    function actualizarNpcs(dt) {
+        if (snapHola && NPCS.length) { aplicarFotoNpcs(snapHola, true); snapHola = null; }
+        if (!esAutoridad()) { actualizarNpcsRemotos(dt); return; }
+        const jugs = listaJugadores();
+        const ahoraMs = performance.now();
+        for (const n of NPCS) {
+            if (n.caido) { n.mov = 0; continue; }
+            let minD = 1e9, jcerca = null;
+            for (const j of jugs) {
+                if (!j.vivo) continue;
+                const d = Math.hypot(j.x - n.x, j.z - n.z);
+                if (d < minD) { minD = d; jcerca = j; }
+            }
+            const activo = n.estado === "ataca" || n.estado === "alerta" || n.estado === "huye";
+            if (minD > 45 && !activo) { n.mov = 0; continue; }       // lejos de todos: se quedan quietos
+            n.golpeT += dt; n.cd -= dt;
+            n.vx = 0; n.vz = 0;
+            let camina = false, corre = false;
+
+            // ¿qué hace al ver a cada jugador? depende de su carácter (y de si esa persona le robó o le pegó)
+            let objAt = null, dAt = 1e9, objHu = null, dHu = 1e9;
+            for (const j of jugs) {
+                if (!j.vivo) continue;
+                const d = Math.hypot(j.x - n.x, j.z - n.z);
+                const enProp = dentroCasa(n.casa, j.x, j.z) && j.y < 2.5;
+                const gol = !!n.golpeadoPor[j.id], ofe = !!n.ofendidoPor[j.id];
+                const calma = (n.calmaPor[j.id] || 0) > ahoraMs;          // lo calmaste hablando
+                const asus = (n.asustadoPor[j.id] || 0) > ahoraMs;        // lo asustaste hablando
+                if (!(enProp || (gol && d < 8) || asus)) continue;
+                let r = null;
+                if (n.tipo === "agresivo") {
+                    if (!calma) r = "ataca";
+                    else if (d < 3) hablarNpc(n, "Mmm... yo te estoy mirando.");
+                } else if (n.tipo === "defensor") {
+                    if (ofe && !calma) r = "ataca";
+                    else if (!ofe && d < 4) hablarNpc(n, "Ey... mirá, no toques nada.");
+                } else if (n.tipo === "cobarde") {
+                    if (asus || (!calma && (ofe || d < 7))) r = "huye";
+                } else {                                            // pacífico
+                    if (gol || asus) r = "huye";
+                    else if (d < 4) hablarNpc(n, elegirTexto(["Ah, hola. Pasá, pasá, no hay problema.", "Si tenés hambre o sed, fijate por ahí."]));
+                }
+                if (r === "ataca" && d < dAt) { objAt = j; dAt = d; }
+                else if (r === "huye" && d < dHu) { objHu = j; dHu = d; }
+            }
+            const reaccion = objAt ? "ataca" : objHu ? "huye" : null;
+            const obj = objAt || objHu;
+
+            if (reaccion === "ataca") {
+                if (n.estado !== "ataca" && n.estado !== "alerta") {
+                    n.estado = "alerta"; n.alerta = n.tipo === "agresivo" ? 0.9 : 0.6;
+                    hablarNpc(n, n.tipo === "agresivo"
+                        ? elegirTexto(["¡¿Qué hacés en mi casa?!", "¡Ladrón! ¡Fuera de acá!", "¡Te voy a romper la cara!"])
+                        : "¡Te dije que no tocaras nada!");
+                }
+            } else if (reaccion === "huye") {
+                if (n.estado !== "huye") {
+                    n.estado = "huye"; n.tx = n.lx; n.tz = n.lz; n.espera = 0;
+                    hablarNpc(n, elegirTexto(["¡P-por favor, no me hagas daño!", "¡Auxilio!"]));
+                }
+            } else if (activo) {
+                n.estado = "para"; n.espera = 3 + Math.random() * 3;       // se calma
+            }
+
+            if (n.estado === "alerta") {
+                n.alerta -= dt;
+                if (n.alerta <= 0) n.estado = "ataca";
+            } else if (n.estado === "ataca" && obj) {
+                const lp = n.aLocal(obj.x, obj.z);
+                const dx = lp[0] - n.lx, dz = lp[1] - n.lz, d = Math.hypot(dx, dz);
+                if (d > 1.0) { camina = moverNpc(n, dx, dz, 2.3 * dt); corre = camina; }
+                else if (n.cd <= 0 && Math.abs(obj.y) < 1.2) { n.cd = 1.3; n.golpeT = 0; n.golpeSeq = (n.golpeSeq + 1) % 100000; n.pendiente = 0.25; n.blanco = obj.id; }
+            } else if (n.estado === "huye" && obj) {
+                n.espera -= dt;
+                if (n.espera <= 0) {                                // elige la esquina más lejos de quien lo asusta
+                    n.espera = 1;
+                    const lp = n.aLocal(obj.x, obj.z);
+                    let mejor = null, mejorD = -1;
+                    for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+                        const cx = sx * (n.w - n.t - 0.7), cz = sz * (n.d - n.t - 0.7);
+                        if (!n.libreMov(cx, cz)) continue;
+                        const dd = Math.hypot(cx - lp[0], cz - lp[1]);
+                        if (dd > mejorD) { mejorD = dd; mejor = [cx, cz]; }
+                    }
+                    if (mejor) { n.tx = mejor[0]; n.tz = mejor[1]; }
+                }
+                const dx = n.tx - n.lx, dz = n.tz - n.lz;
+                if (Math.hypot(dx, dz) > 0.3) { camina = moverNpc(n, dx, dz, 2.4 * dt); corre = camina; }
+            } else if (n.estado === "camina") {
+                const dx = n.tx - n.lx, dz = n.tz - n.lz;
+                const d = Math.hypot(dx, dz);
+                if (d < 0.1 || minD < 1.3) {
+                    n.estado = "para"; n.espera = 2 + Math.random() * 5;
+                } else {
+                    const paso = Math.min(d, 0.9 * dt);
+                    const nlx = n.lx + dx / d * paso, nlz = n.lz + dz / d * paso;
+                    if (!n.libre(nlx, nlz)) {
+                        n.estado = "para"; n.espera = 1 + Math.random() * 2;
+                    } else {
+                        const wp = n.T(nlx, nlz);
+                        n.vx = wp[0] - n.x; n.vz = wp[1] - n.z;
+                        n.lx = nlx; n.lz = nlz; n.x = wp[0]; n.z = wp[1];
+                        camina = true;
+                    }
+                }
+            } else if (n.estado !== "alerta") {
+                if (n.estado !== "para") n.estado = "para";
+                n.espera -= dt;
+                if (n.espera <= 0) {
+                    n.espera = 2 + Math.random() * 5;
+                    for (let k = 0; k < 8; k++) {
+                        const tx = -n.w + n.t + 0.6 + Math.random() * (2 * n.w - 2 * n.t - 1.2);
+                        const tz = -n.d + n.t + 0.6 + Math.random() * (2 * n.d - 2 * n.t - 1.2);
+                        if (Math.hypot(tx - n.lx, tz - n.lz) < 1) continue;
+                        if (!n.libre(tx, tz) || !n.camino(n.lx, n.lz, tx, tz)) continue;
+                        n.tx = tx; n.tz = tz; n.estado = "camina";
+                        break;
+                    }
+                }
+            }
+
+            // el golpe llega un instante después de levantar el brazo (si el blanco todavía está cerca)
+            if (n.pendiente > 0) {
+                n.pendiente -= dt;
+                if (n.pendiente <= 0) {
+                    const bj = jugs.find(function (j) { return j.id === n.blanco; });
+                    if (bj && bj.vivo && Math.hypot(bj.x - n.x, bj.z - n.z) < 1.5 && Math.abs(bj.y) < 1.2) {
+                        const dano = (n.tipo === "agresivo" ? 7 : 5) + Math.random() * (n.tipo === "agresivo" ? 7 : 6);
+                        if (bj.yo) recibirGolpe(dano, "el dueño de la casa");
+                        else enviarRed({ tipo: "npcdano", a: Number(bj.id), d: dano });
+                    }
+                }
+            }
+
+            // la caja de colisión sigue al NPC
+            n.col[0] = n.x - 0.3; n.col[1] = n.z - 0.3; n.col[2] = n.x + 0.3; n.col[3] = n.z + 0.3;
+
+            // hacia dónde mira
+            const mira = obj || jcerca;
+            const haciaVos = mira ? Math.atan2(-(mira.x - n.x), -(mira.z - n.z)) : n.cuerpo;
+            let objetivo = n.cuerpo;
+            if (camina && n.estado === "ataca") objetivo = haciaVos;
+            else if (camina) objetivo = Math.atan2(-n.vx, -n.vz);
+            else if (n.estado === "alerta" || n.estado === "ataca" || minD < 6) objetivo = haciaVos;
+            n.cuerpo += angDif(objetivo, n.cuerpo) * Math.min(1, dt * (camina ? 8 : 4));
+            const cab = (minD < 6 || n.estado === "ataca" || n.estado === "alerta") ? angDif(haciaVos, n.cuerpo) : 0;
+            n.giroCab += (Math.max(-0.9, Math.min(0.9, cab)) - n.giroCab) * Math.min(1, dt * 6);
+
+            n.corre = corre;
+            n.mov += ((camina ? 1 : 0) - n.mov) * Math.min(1, dt * 10);
+            if (n.mov > 0.1) n.fase += dt * (corre ? 9 : 5.4);
+        }
+
+        // en un servidor, les manda a los demás dónde están los NPCs (10 veces por segundo)
+        if (conexion) {
+            acumFotoNpc += dt;
+            if (acumFotoNpc >= 0.1) { acumFotoNpc = 0; enviarRed({ tipo: "npcs", n: fotoNpcs() }); }
+        }
+    }
+
+    function dibujarNpcs() {
+        if (NPCS.length === 0) return;
+        const lista = [];
+        for (const n of NPCS) {
+            if (Math.hypot(px - n.x, pz - n.z) > 40) continue;
+            const est = {
+                base: n.base, eq: n.eq, acc: {}, baile: "", baileT: 0,
+                manoD: null, manoI: null, pl: [0, 0], postura: n.caido ? 2 : 0, pelea: n.estado === "ataca" || n.estado === "alerta",
+                fase: n.fase, mov: n.mov, corre: !!n.corre, golpeT: n.golpeT, pitch: 0,
+                giroCuerpo: n.cuerpo, giroCab: n.giroCab
+            };
+            personajeATriangulos(lista, cajasPersonaje(est), n.x, 0.02, n.z);
+        }
+        if (lista.length === 0) return;
+        configurarAtributos(bufferNpcs);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(lista), gl.DYNAMIC_DRAW);
+        gl.drawArrays(gl.TRIANGLES, 0, lista.length / 6);
+    }
+
+    // ----- Micrófono: los NPCs detectan tu voz por zona (por ahora solo detectan: no reaccionan) -----
+    // Mientras está prendido se mide qué tan fuerte hablás y de ahí sale un alcance en metros.
+    // Cada NPC dentro de ese alcance queda con n.oyeVoz = true (y n.distVoz = distancia).
+    // Las paredes tapan: si vos y el NPC no están en el mismo lugar (adentro de la misma casa o los dos afuera), el alcance se achica a la mitad.
+    const voz = { activo: false, pidiendo: false, ctx: null, analizador: null, buf: null, stream: null,
+        sueloDb: -60, calib: 0, nivel: 0, radio: 0, oyen: 0, acumHud: 0, pico: 0, picoT: 0, rec: null };
+    const cajaVoz = document.createElement("div");
+    cajaVoz.style.cssText = "position:fixed;top:20px;right:150px;z-index:790;display:none;font:600 .85rem sans-serif;color:#fff;text-align:right;";
+    const estiloBtnVoz = "padding:.35rem .8rem;font:600 .85rem sans-serif;color:#fff;background:rgba(0,0,0,.55);" +
+        "border:1px solid rgba(255,255,255,.35);border-radius:8px;cursor:pointer;margin-left:6px;";
+    const botonVoz = document.createElement("button");
+    botonVoz.style.cssText = estiloBtnVoz;
+    botonVoz.textContent = "🎤 Voz: off";
+    const botonTexto = document.createElement("button");
+    botonTexto.style.cssText = estiloBtnVoz;
+    botonTexto.textContent = "💬";
+    botonTexto.title = "Escribirle algo a los NPCs (para probar sin micrófono)";
+    const lineaVoz = document.createElement("div");
+    lineaVoz.style.cssText = "margin-top:6px;max-width:320px;margin-left:auto;text-shadow:0 1px 3px #000;opacity:0;transition:opacity .5s;";
+    cajaVoz.appendChild(botonVoz); cajaVoz.appendChild(botonTexto); cajaVoz.appendChild(lineaVoz);
+    document.body.appendChild(cajaVoz);
+    function casaDe(x, z) {
+        for (let i = 0; i < CASAS.length; i++) {
+            const r = CASAS[i];
+            if (x > r[0] && x < r[2] && z > r[1] && z < r[3]) return i;
+        }
+        return -1;
+    }
+    async function activarMicrofono() {
+        if (voz.activo || voz.pidiendo) return;
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            avisar("Este navegador no deja usar el micrófono (hace falta https)", 3500);
+            return;
+        }
+        voz.pidiendo = true;
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({
+                audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: false }
+            });
+            const AC = window.AudioContext || window.webkitAudioContext;
+            const ctx = new AC();
+            if (ctx.state === "suspended") { try { await ctx.resume(); } catch (e) {} }
+            const fuente = ctx.createMediaStreamSource(stream);
+            const analizador = ctx.createAnalyser();
+            analizador.fftSize = 1024;
+            fuente.connect(analizador);                    // no se conecta a los parlantes: no te escuchás
+            voz.stream = stream; voz.ctx = ctx; voz.analizador = analizador;
+            voz.buf = new Float32Array(analizador.fftSize);
+            voz.sueloDb = -60; voz.calib = 1.5; voz.nivel = 0; voz.radio = 0;
+            voz.activo = true;
+            avisar("Micrófono prendido: quedate callado un segundito para calibrar", 3000);
+            iniciarReconocimiento();
+        } catch (e) {
+            avisar("No pude usar el micrófono (permiso denegado)", 3000);
+        }
+        voz.pidiendo = false;
+    }
+    function desactivarMicrofono() {
+        if (!voz.activo) return;
+        voz.activo = false;
+        detenerReconocimiento();
+        try { voz.stream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {}
+        try { voz.ctx.close(); } catch (e) {}
+        voz.stream = null; voz.ctx = null; voz.analizador = null;
+        voz.nivel = 0; voz.radio = 0; voz.oyen = 0;
+        for (const n of NPCS) { n.oyeVoz = false; n.distVoz = 0; }
+        avisar("Micrófono apagado", 1500);
+    }
+    function alternarMicrofono() { if (voz.activo) desactivarMicrofono(); else activarMicrofono(); }
+    botonVoz.addEventListener("click", function () { alternarMicrofono(); botonVoz.blur(); });
+
+    // ----- Hablarles a los NPCs: lo que decís cambia cómo reaccionan -----
+    // IA: el reconocimiento de voz del navegador pasa lo que dijiste a texto, se detecta la intención por palabras clave
+    // (amenaza, insulto, calma, pedido de ayuda, saludo...) y cada NPC reacciona según su carácter.
+    // Lo que no entiende lo busca en internet (Wiktionario / Wikipedia) y lo aprende; las preguntas las contesta con Wikipedia.
+    const NOMBRE_INTENCION = { amenaza: "amenaza", insulto: "insulto", calma: "calma", ayuda: "pedido de ayuda", saludo: "saludo",
+        gracias: "gracias grax thanks mil muchas agradecida agradezco copado copada groso grosa joya barbaro bacan chevere padre buenazo buenaza nice crack capo genio genia", despedida: "despedida", pregunta: "pregunta", desconocido: "no se entiende" };
+    const INTENCIONES_OK = Object.keys(NOMBRE_INTENCION);
+    function sinAcentos(t) { return String(t || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9ñ\s]/g, " ").replace(/\s+/g, " ").trim(); }
+    // "A veces te sueño" / "soñé con vos" habla de SOÑAR (dormido), no de tener sueño ni de pedir ayuda.
+    // Se mira el texto con la ñ (sinAcentos la pierde: "sueño" y "sueno" quedarían iguales).
+    function esSonarConAlguien(texto) {
+        const t = String(texto || "").toLowerCase().normalize("NFC").replace(/[¿?¡!.,;:"“”]/g, " ").replace(/\s+/g, " ");
+        const fin = "(?![a-zñáéíóú])", ini = "(?<![a-zñáéíóú])";
+        return new RegExp(ini + "(te|lo|la|los|las|nos) (sueño|sueno|sueñas|sueñan|soñé|sone|soñaba|soñaste|soñamos)" + fin).test(t) ||
+               new RegExp(ini + "(soñé|sone|soñaba|soñar|soñando|soñamos|soñaste) con" + fin).test(t) ||
+               new RegExp(ini + "sueño (con (vos|ti|usted|ustedes)|contigo)" + fin).test(t) ||
+               new RegExp(ini + "(a veces|siempre|anoche|ayer|todas las noches|cada noche) (sueño|sueno) (con|contigo)" + fin).test(t);
+    }
+    // ¿De quién habla la frase? Evita confundir "tengo frío" (me pasa a mí) con "hace frío" (el clima), o "esa gallina" con un insulto.
+    function hablaDeMi(texto) {
+        return /\b(tengo|tenemos|necesito|necesitamos|preciso|estoy|estamos|me|mi|mis|nos|nuestro|nuestra|ayudame|ayudenme|dame|damelo|auxilio|socorro|por favor|porfa|quiero|queremos|siento|duele|muero)\b/.test(sinAcentos(texto));
+    }
+    function hablaConTigo(texto) {
+        return /\b(vos|tu|tus|te|ti|usted|ustedes|sos|eres|son|les|dame|dale|entrega\w*)\b/.test(sinAcentos(texto));
+    }
+    // "no necesito nada", "no tengo hambre", "ya comí": avisa que NO le falta algo (no es un pedido). Si además agradece, se toma como gracias.
+    function esNegarNecesidad(texto) {
+        const t = sinAcentos(texto);
+        if (/\b(gracias|grax|thanks)\b/.test(t)) return false;
+        return /\bno (me )?(hace falta|hacen falta)\b|\bno (necesito|necesitamos|preciso|tengo (hambre|sed|frio|sueno))\b|\bya (comi|bebi|tome|desayune|almorce|cene)\b/.test(t);
+    }
+    function clasificarReglas(texto) {
+        const t = sinAcentos(texto);
+        if (!t) return "desconocido";
+        // "no necesito nada, gracias": rechaza amable, es un gracias (no un pedido)
+        if (/\b(gracias|grax|thanks)\b/.test(t) && /\bno (me )?(hace falta|hacen falta|necesito|necesitamos|preciso|tengo (hambre|sed|frio|sueno))\b|\bya (comi|bebi|tome)\b/.test(t)) return "gracias";
+        if (/\bno te (voy a |quiero |pienso )?(matar|mato|lastim\w*|hacer dano|hago dano|pegar|golpear|robar|asaltar)/.test(t)) return "calma";
+        if (/\b(te voy a (matar|golpear|pegar|lastimar|romper|reventar)|te mato|te reviento|te lastimo|asalto|esto es un robo|voy a robar|dame (todo|la plata|lo que tengas|tus cosas|tu plata)|entregame|entrega todo|manos arriba|arriba las manos|o te (mato|lastimo|pego)|(voy a )?matarte|(voy a )?matar a (vos|usted|ustedes|ti)|mato a (vos|usted|ustedes|ti))\b/.test(t)) return "amenaza";
+        if (/\b(idiota|estupid\w*|imbecil|inutil|basura|asquer\w*|cagon|tarado|pelotudo|hijo de puta|mierda|cobarde|maldito|inservible|desgraciado)\b/.test(t)) return "insulto";
+        // charla de todos los días (jerga y frases hechas)
+        if (/\b(que onda|que hubo|quiubo|que cuentas|que pasa|todo bien|todo tranquilo|como te va|como andan|como van|que se cuenta|wena|wenas|buenaas|buenas buenas|buen dia|saludos|bienvenido)\b/.test(t) && !/\b(matar|mato|golpe\w*|robar|robo)\b/.test(t)) return "saludo";
+        // ofrecer ayuda ("¿necesitás algo?", "te ayudo") no es pedirla: es buena onda
+        if (/\b(te ayudo|te ayudamos|te puedo ayudar|puedo ayudarte|podemos ayudarte|queres que te ayude|en que te puedo ayudar|necesitas|te traigo|te doy una mano|te echo una mano|te presto)\b/.test(t)) return "calma";
+        if (/\b(estoy perdido|estoy perdida|me perdi|me ayudas|me ayudan|me das (algo|un poco|agua|comida)|tenes (algo|agua|comida|venda\w*)|tienes (algo|agua|comida|venda\w*)|una mano|me prestas|me convidas|regalame|convidame|tengo (hambre|sed|frio|miedo|sueno)|me siento mal|estoy mal|estoy herido|estoy herida)\b/.test(t)) return "ayuda";
+        if (/\b(linda casa|bonita casa|lindo lugar|bonito lugar|que linda casa|que lindo lugar|me gusta (tu|su) casa|sin problema|no hay problema|no hay drama|de nada|esta bien|todo en orden|buena gente|buena persona|sos buena|eres buena|sos bueno|eres bueno|te quiero ayudar|vengo en paz|soy amigo|soy amiga|no soy peligroso|no soy peligrosa)\b/.test(t)) return "calma";
+        if (/\b(mil gracias|muchas gracias|grax|thanks|thank you|te debo una|sos un crack|sos una crack|sos un capo|sos groso|sos grosa|que groso|que grosa|que copado|que copada|genial|joya|barbaro|de diez|un genio|una genia|que bueno)\b/.test(t)) return "gracias";
+        if (/\b(nos vemos|hasta manana|hasta pronto|hasta la proxima|bye|ciao|chao|me tengo que ir|tengo que irme|ya me voy|me fui|que andes bien|que te vaya bien|cuidate|cuidense|nos pillamos)\b/.test(t)) return "despedida";
+        if (/\b(de donde sos|de donde eres|cuantos anos tenes|cuantos anos tienes|vivis solo|vives solo|vivis sola|vives sola|estas solo|estas sola|tenes familia|tienes familia|hace mucho que vivis|hace mucho que vives|que haces aca|que haces aqui|que es esto|que paso aca|que paso aqui|como llegaste|como sobreviviste|sabes algo|sabes que paso)\b/.test(t)) return "pregunta";
+        // regalos: "¿qué me diste?" es una pregunta, "me regalaste algo" es agradecer (no una amenaza)
+        if (/\b(que|cual|cuales)\b.*\b(me|nos) (diste|regalaste|dejaste|trajiste|entregaste)\b/.test(t)) return "pregunta";
+        if (/\b(me|nos) (diste|regalaste|dejaste|trajiste|entregaste)\b/.test(t)) return "gracias";
+        if (/\b(tranquil\w*|calma\w*|paz|perdon\w*|disculp\w*|amigo|tranqui|no pasa nada|no tengas miedo|no quiero (pelear|problemas|hacerte)|no te (hago|voy a hacer|molesto|voy a molestar))\b/.test(t)) return "calma";
+        if (/\b(ayuda\w*|auxilio|necesito|hambre|sed|agua|comida|comer|herid\w*|sangr\w*|medicina|venda\w*|por favor|porfa|me muero)\b/.test(t) && (t.split(" ").length <= 2 || hablaDeMi(texto))) return "ayuda";
+        if (/\b(hola|holi|buenas|buen dia|buenos dias|buenas tardes|buenas noches|que tal|como (estas|andas|va)|ey|hey)\b/.test(t)) return "saludo";
+        if (/\b(gracias|te agradezco|muy amable)\b/.test(t)) return "gracias";
+        if (/\b(chau|adios|hasta luego|nos vemos|me voy|me retiro)\b/.test(t)) return "despedida";
+        if (/\b(quien (sos|eres)|como te llamas|que haces|donde estoy|que es este lugar|vivis aca|vives aca)\b/.test(t)) return "pregunta";
+        return "desconocido";
+    }
+
+
+    // ----- Vocabulario: muchas palabras por intención + tolera errores del reconocimiento + aprende solo -----
+    const LEXICO_TXT = {
+        amenaza: "matar mato matare mataria muerte morir morite muerete asesinar asesino degollar apunalar acuchillar disparar disparo balazo tiro pistola arma armado cuchillo navaja machete hacha golpear golpe pegar paliza reventar romper destrozar aplastar lastimar herir torturar quemar secuestrar asalto asaltar robar robo atraco plata billetera dinero entregar entrega pagar peligro cuidado acabar eliminar exterminar venganza vengarme destruir ahorcar estrangular sufrir sufriras mataste matalo matarlo matarte sangre degollado cadaver cadaveres ojo ojito atras cuidadito patada patadas trompada trompadas cachetada cachetadas piña punetazo punetazos sopapo sopapos garrote palo rompo rompote desgraciar linchar fusilar",
+        insulto: "idiota estupido estupida imbecil inutil basura asqueroso asquerosa asco cagon tarado tarada pelotudo pelotuda mierda carajo puta maldito maldita inservible desgraciado desgraciada miserable cobarde gallina payaso tonto tonta bobo boba zonzo nabo burro animal bestia gordo gorda feo fea horrible patetico ridiculo estupidez cretino subnormal escoria rata cerdo puerco hediondo apestoso sucio forro mediocre fracasado perdedor boludo boluda pelotudos pavo pava nabos nabo salame zapallo chanta mugre mugroso lacra lacras basuras idiotas estupidos cabeza hueco inutiles inservibles cobardes miedoso gil gila trolo cornudo maricon maricona mamerto menso mensa menso tarugo zoquete baboso babosa asco asquerosos escupo vago vaga vagos garca sorete cabron cabrona pendejo pendeja culiao conchudo imbeciles",
+        calma: "tranquilo tranquila tranqui calma calmate calmo paz pacifico amigo amiga amistad amigable perdon perdona perdoname disculpa disculpame disculpe respeto respetuoso confianza confiar confia tranquilizate relajate relajado sereno amable cordial hermano hermana companero vecino vecina senor senora buena onda lamento tranqui tranquis relax relajate paz pacifica pacificos relajados cool bien bueno buena buenos buenas onda gente genio capo maestro crack compa compadre colega parcero parce hermano hermanito hermanita viejo viejito amigos amigas cordial gentil paciencia sin drama lindo linda bonito bonita",
+        ayuda: "ayuda ayudame ayudar ayudarme auxilio socorro necesito necesitar hambre hambriento hambrienta sed sediento sedienta agua comida comer beber alimento alimentar herido herida sangre sangrando sangro medicina medicamento remedio venda vendar curar doctor medico enfermo enferma fiebre dolor duele mareado cansado frio refugio abrigo favor porfa porfavor suplico ruego piedad ayudenme ayudarme auxiliame socorrame socorro perdido perdida perdi frio frios helado calor cansancio cansado cansada sueno dormir descansar bañarme banarme banio bano agua aguita comidita galletas galleta pan lata latas conserva conservas fruta manzana bebida gaseosa jugo leche cura curita curitas gasas alcohol botiquin pastilla pastillas pila pilas linterna mochila abrigo campera remera pantalon zapatillas zapatos ropa mantita manta",
+        saludo: "hola holi holis ola alo buenas buenos buen dia tarde noche ey hey epa saludos bienvenido buenas buenaas wena wenas epa epale quiubo quihubo que onda onda saludo saludos bienvenidos bienvenida holaa holaaa holis hello hi",
+        gracias: "gracias agradezco agradecido agradecida genial excelente buenisimo",
+        despedida: "chau chao adios luego vemos retiro cuidate cuidense suerte pasala chau chauu chao ciao bye adios luego pronto manana vemos retiro cuidate cuidense suerte pasala buen viaje",
+        pregunta: "quien quienes eres llamas nombre vivis vives vive donde lugar haces hacen quien quienes eres sos llamas nombre vivis vives vive donde lugar haces hacen pasa paso porque como cuando cuanto cuantos cual cuales familia solo sola edad anos mucho tiempo llegaste sobreviviste"
+    };
+    // Adjetivos sueltos que parecen calma pero en una frase larga suelen describir otra cosa ("el agua está linda")
+    const CALMA_FLOJA = new Set(sinAcentos("lindo linda lindos lindas bonito bonita bien bueno buena buenos buenas onda gente genio capo maestro crack cool relax viejo viejito sereno cordial gentil").split(" "));
+    const PRIORIDAD = ["amenaza", "insulto", "calma", "ayuda", "saludo", "gracias", "despedida", "pregunta"];
+    const STOP = new Set(sinAcentos("que como para pero porque cuando esto eso esta este esa ese aquel con sin sobre entre desde hasta hay ser estar tener hacer voy vas vamos soy sos eres era fue muy mas menos tambien solo todo toda todos nada algo alguien yo vos tu te me se lo la las los le les un una unos unas del al por mis tus sus nos si no ya ahi aca alla ahora luego cual quien donde cuando tengo tenes tiene quiero queres quiere puedo podes puede").split(" "));
+    function raiz(w) {
+        if (w.length <= 3) return w;
+        w = w.replace(/(ar|er|ir)(me|te|lo|la|se|nos|le|les)$/, "$1");      // matarte, ayudarme, degollarlo...
+        for (let i = 0; i < 2; i++) {
+            const r = w.replace(/(ando|iendo|aron|aste|amos|ado|ido|ar|er|ir|an|en|as|es|os|s|a|o|e)$/, "");
+            if (r.length >= 3) w = r;
+        }
+        return w;
+    }
+    const LEX = {};
+    PRIORIDAD.forEach(function (it) {
+        LEXICO_TXT[it].split(" ").forEach(function (w) { const r = raiz(w); if (!LEX[r]) LEX[r] = it; });
+    });
+    const LEX_CLAVES = Object.keys(LEX);
+    function distancia(a, b, max) {         // Levenshtein (corta si pasa del máximo)
+        if (Math.abs(a.length - b.length) > max) return max + 1;
+        let prev = [];
+        for (let j = 0; j <= b.length; j++) prev.push(j);
+        for (let i = 1; i <= a.length; i++) {
+            const cur = [i];
+            let min = i;
+            for (let j = 1; j <= b.length; j++) {
+                cur.push(Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)));
+                if (cur[j] < min) min = cur[j];
+            }
+            if (min > max) return max + 1;
+            prev = cur;
+        }
+        return prev[b.length];
+    }
+    // Lo que aprendió de vos (se guarda en este dispositivo): { raíz: { intención: veces } }
+    let APRENDIDO = {};
+    try { APRENDIDO = JSON.parse(localStorage.getItem("rainster_lexico") || "{}") || {}; } catch (e) { APRENDIDO = {}; }
+    function guardarAprendido() { try { localStorage.setItem("rainster_lexico", JSON.stringify(APRENDIDO)); } catch (e) {} }
+    function intencionAprendida(r) {
+        const a = APRENDIDO[r];
+        if (!a) return null;
+        let mejor = null, n = 0, total = 0;
+        for (const it in a) { total += a[it]; if (a[it] > n) { n = a[it]; mejor = it; } }
+        return n >= 3 && n / total >= 0.7 ? mejor : null;
+    }
+    // Intención de una palabra: del vocabulario, parecida a una conocida (errores de reconocimiento) o aprendida
+    function intencionPalabra(w) {
+        const r = raiz(w);
+        if (LEX[r]) return LEX[r];
+        if (w.length >= 6) {        // solo palabras largas y con la misma letra inicial: así "diste" ya no se confunde con "disparo"
+            const max = w.length >= 10 ? 2 : 1;
+            for (const c of LEX_CLAVES) if (c.length >= 5 && c[0] === r[0] && distancia(r, c, max) <= max) return LEX[c];
+        }
+        return intencionAprendida(r);
+    }
+    function clasificarFrase(texto) {
+        const reglas = clasificarReglas(texto);
+        if (reglas !== "desconocido") return reglas;
+        const puntos = {};
+        const pals = sinAcentos(texto).split(" ").filter(Boolean);
+        const corta = pals.length <= 2, mi = hablaDeMi(texto), contigo = hablaConTigo(texto);
+        pals.forEach(function (w) {
+            if (w.length < 3 || STOP.has(w)) return;
+            const it = intencionPalabra(w);
+            if (!it) return;
+            // en una frase larga: "frío", "agua" o "cansado" solo piden ayuda si hablás de vos; "plata" o "gallina" solo amenazan/insultan si es a él
+            if (it === "ayuda" && !corta && !mi) return;
+            if ((it === "amenaza" || it === "insulto") && !corta && !contigo) return;
+            if (it === "calma" && CALMA_FLOJA.has(w) && !corta && !contigo) return;
+            if (it === "saludo" && (w === "dia" || w === "tarde" || w === "noche") && !corta) return;     // "qué lindo día" no es un saludo
+            puntos[it] = (puntos[it] || 0) + 1;
+        });
+        let mejor = "desconocido", n = 0;
+        PRIORIDAD.forEach(function (it) { if ((puntos[it] || 0) > n) { n = puntos[it]; mejor = it; } });
+        return mejor;
+    }
+    // Las palabras que no conoce y vinieron en una frase que sí entendió se van asociando a esa intención
+    function aprenderDe(texto, intent) {
+        const nuevas = [];
+        if (intent === "desconocido") return nuevas;
+        sinAcentos(texto).split(" ").forEach(function (w) {
+            if (w.length < 4 || STOP.has(w) || intencionPalabra(w)) return;
+            const r = raiz(w);
+            const a = APRENDIDO[r] || (APRENDIDO[r] = {});
+            a[intent] = (a[intent] || 0) + 1;
+            if (a[intent] === 3 && intencionAprendida(r) === intent) nuevas.push(w);
+        });
+        if (Object.keys(APRENDIDO).length > 3000) APRENDIDO = {};       // por si crece de más
+        guardarAprendido();
+        return nuevas;
+    }
+    // Enseñar a propósito: "desgraciado significa insulto"
+    function ensenar(texto) {
+        const m = /^(.+?) (significa|quiere decir|quiero decir|es una?) (amenaza|insulto|calma|ayuda|saludo|gracias|despedida|pregunta)$/.exec(sinAcentos(texto));
+        if (!m) return null;
+        const palabras = m[1].split(" ").filter(function (w) { return w.length >= 3 && !STOP.has(w); });
+        palabras.forEach(function (w) { const r = raiz(w); APRENDIDO[r] = {}; APRENDIDO[r][m[3]] = 3; });
+        guardarAprendido();
+        return { palabras: palabras, intent: m[3] };
+    }
+
+    // ----- Internet: Wiktionario (para entender palabras nuevas) y Wikipedia (para saber cosas) -----
+    // - Una palabra que no conoce se busca en el diccionario de internet, se deduce qué intención tiene según su definición
+    //   y se guarda en este dispositivo: la próxima vez ya la sabe, incluso sin conexión.
+    // - Una pregunta ("¿qué es un volcán?", "¿quién fue San Martín?", "contame sobre Japón") se contesta con lo que dice Wikipedia,
+    //   y después podés decir "contame más" para que siga.
+    // Todo se pide directo desde el navegador (esas APIs permiten CORS), no hace falta tocar el servidor.
+    const WEB_CLAVE = "rainster_web2";
+    let WEB = { pal: {}, tema: {} };
+    try { const g = JSON.parse(localStorage.getItem(WEB_CLAVE) || "null"); if (g && g.pal && g.tema) WEB = g; } catch (e) { WEB = { pal: {}, tema: {} }; }
+    function recortarCache(obj, max, dejar) {
+        const k = Object.keys(obj);
+        if (k.length <= max) return;
+        k.sort(function (a, b) { return (obj[a].t || 0) - (obj[b].t || 0); }).slice(0, k.length - dejar).forEach(function (c) { delete obj[c]; });
+    }
+    function guardarWeb() {
+        recortarCache(WEB.pal, 1500, 1200);
+        recortarCache(WEB.tema, 40, 30);
+        try { localStorage.setItem(WEB_CLAVE, JSON.stringify(WEB)); } catch (e) {}
+    }
+
+    // Para no abusar de Wikipedia: como mucho 12 pedidos cada 15 segundos, y cada uno espera 7 s como máximo
+    const webPedidos = [];
+    function webPermitido() {
+        const ahora = Date.now();
+        while (webPedidos.length && ahora - webPedidos[0] > 15000) webPedidos.shift();
+        if (webPedidos.length >= 12) return false;
+        webPedidos.push(ahora);
+        return true;
+    }
+    function pedirJSON(url) {            // devuelve el JSON, o null si no hay conexión / tardó / se pidieron demasiados
+        return new Promise(function (resolver) {
+            if (typeof fetch !== "function" || navigator.onLine === false || !webPermitido()) { resolver(null); return; }
+            let listo = false, reloj = null;
+            const ctl = typeof AbortController === "function" ? new AbortController() : null;
+            const fin = function (v) { if (listo) return; listo = true; clearTimeout(reloj); resolver(v); };
+            reloj = setTimeout(function () { if (ctl) { try { ctl.abort(); } catch (e) {} } fin(null); }, 7000);
+            try {
+                fetch(url, ctl ? { signal: ctl.signal } : {})
+                    .then(function (r) { return r.ok ? r.json() : null; })
+                    .then(fin, function () { fin(null); });
+            } catch (e) { fin(null); }
+        });
+    }
+
+    // --- Wiktionario: definiciones de una palabra ---
+    function limpiarWiki(t) {
+        t = String(t || "").replace(/<ref[^>]*>[\s\S]*?<\/ref>|<ref[^>]*\/>|<!--[\s\S]*?-->/g, "");
+        t = t.replace(/\{\{\s*(?:plm|ucf)\s*\|\s*([^{}|]*)[^{}]*\}\}/gi, "$1");
+        for (let i = 0; i < 4; i++) t = t.replace(/\{\{[^{}]*\}\}/g, "");
+        t = t.replace(/\[\[(?:[^\]|]*\|)?([^\]]*)\]\]/g, "$1").replace(/'{2,}/g, "").replace(/<[^>]+>/g, "");
+        return t.replace(/\s+/g, " ").trim();
+    }
+    function definiciones(wikitext) {
+        let txt = String(wikitext || "");
+        const ini = txt.search(/\{\{\s*lengua\s*\|\s*es\s*\}\}/i);
+        if (ini >= 0) {
+            txt = txt.slice(ini + 1);
+            const fin = txt.search(/\n==\s*\{\{\s*lengua\s*\|/i);
+            if (fin >= 0) txt = txt.slice(0, fin);
+        }
+        const lista = [];
+        txt.split("\n").forEach(function (l) {
+            const m = /^;\s*\d+[^:]*:\s*(.+)$/.exec(l);
+            if (!m) return;
+            const d = limpiarWiki(m[1]);
+            if (d.length >= 3) lista.push(d);
+        });
+        return lista.slice(0, 5);
+    }
+    // Sinónimos de la palabra (sección "Sinónimos" del Wiktionario): si alguno ya lo conoce, hereda su significado
+    function sinonimos(wikitext) {
+        let txt = String(wikitext || "");
+        const ini = txt.search(/\{\{\s*lengua\s*\|\s*es\s*\}\}/i);
+        if (ini >= 0) {
+            txt = txt.slice(ini + 1);
+            const fin = txt.search(/\n==\s*\{\{\s*lengua\s*\|/i);
+            if (fin >= 0) txt = txt.slice(0, fin);
+        }
+        const lista = [];
+        let dentro = false;
+        txt.split("\n").forEach(function (l) {
+            if (/^={3,}/.test(l)) { dentro = /^={3,}\s*Sin[oó]nimos?\s*={3,}/i.test(l); return; }
+            if (!dentro) return;
+            const re = /\[\[(?:[^\]|]*\|)?([^\]]+)\]\]/g;
+            let m;
+            while ((m = re.exec(l))) { const w = sinAcentos(m[1]); if (w && w.indexOf(" ") < 0 && lista.indexOf(w) < 0) lista.push(w); }
+        });
+        return lista.slice(0, 15);
+    }
+    // Palabras que delatan la intención en una definición: [fuertes, débiles]
+    const MARCAS_DEF = {
+        amenaza: [/\b(matar|asesin\w*|homicid\w*|amenaz\w*|intimid\w*|torturar|quitar la vida|disparar|atracar|asaltar)\b/g,
+                  /\b(violen\w*|agred\w*|agresi\w*|golpe\w*|herir|lastimar|robar|hurtar|destruir|atacar|delito|crimen|mortal|letal|arma\w*)\b/g],
+        insulto: [/\b(insult\w*|ofensiv\w*|despectiv\w*|peyorativ\w*|injuri\w*|denigr\w*|menospreci\w*|improperio|vulgarismo)\b/g,
+                  /\b(ofend\w*|despreci\w*|grosero|vulgar|tonto|necio|torpe|mezquino|ruin|canalla|vil|estupid\w*|idiota|imbecil)\b/g],
+        calma: [/\b(calma\w*|tranquil\w*|sosiego|serenidad|pacific\w*|perdon\w*|disculp\w*|reconcili\w*)\b/g,
+                /\b(sereno|paz|apacible|amistad|amig\w*|cordial\w*|armonia|relaj\w*|clemencia|compasion|confianza)\b/g],
+        ayuda: [/\b(ayud\w*|auxilio|socorro|asistencia|suplic\w*|implor\w*)\b/g,
+                /\b(necesidad|necesitar|hambre|sed|enferm\w*|dolor|medicina|medicamento|remedio|alimento|herid\w*)\b/g],
+        saludo: [/\b(saludo|saludar|bienvenid\w*|salutacion)\b/g, /\b(cortesia)\b/g],
+        gracias: [/\b(agradec\w*|gratitud)\b/g, /(?!x)x/g],
+        despedida: [/\b(despedid\w*|despedir\w*|adios)\b/g, /\b(hasta luego|hasta pronto|marcharse|separarse)\b/g],
+        pregunta: [/(?!x)x/g, /(?!x)x/g]                       // las preguntas se detectan por la frase, no por definiciones
+    };
+    function intencionDeDefs(defs, sins) {
+        const puntos = {};
+        (sins || []).forEach(function (w) {                     // un sinónimo que ya conoce pesa fuerte
+            const it = w.length >= 3 && !STOP.has(w) ? intencionPalabra(w) : null;
+            if (it) puntos[it] = (puntos[it] || 0) + 3;
+        });
+        defs.forEach(function (d) {                             // "Sinónimo de X" / "Dicho de X"
+            const m = /^(?:sinonimo|equivalente|variante|forma)\b.*?\bde ([a-zñ]{3,})\s*\.?$/.exec(sinAcentos(d));
+            const it = m ? intencionPalabra(m[1]) : null;
+            if (it) puntos[it] = (puntos[it] || 0) + 3;
+        });
+        defs.forEach(function (d, i) {
+            const t = sinAcentos(d), peso = i === 0 ? 1.5 : 1;
+            PRIORIDAD.forEach(function (it) {
+                const m = MARCAS_DEF[it];
+                puntos[it] = (puntos[it] || 0) + peso * (2 * (t.match(m[0]) || []).length + (t.match(m[1]) || []).length);
+            });
+            t.split(" ").forEach(function (w) {                 // palabras que ya conoce del vocabulario suman un poquito
+                if (w.length < 4 || STOP.has(w)) return;
+                const it = LEX[raiz(w)];
+                if (it) puntos[it] = (puntos[it] || 0) + 0.5 * peso;
+            });
+        });
+        let mejor = null, n = 0, segundo = 0;
+        PRIORIDAD.forEach(function (it) {
+            const p = puntos[it] || 0;
+            if (p > n) { segundo = n; n = p; mejor = it; } else if (p > segundo) segundo = p;
+        });
+        return mejor && n >= 2.5 && n - segundo >= 1 ? mejor : null;
+    }
+    // Sentidos secundarios de una palabra (la 1ª definición manda): "perro" es un animal, pero otra acepción es "persona despreciable".
+    // Solo cuenta si se lo decís A ÉL ("sos un perro"); "tengo un perro" no ofende a nadie.
+    function intencionAlterna(defs) {
+        const pts = { insulto: 0, amenaza: 0 };
+        defs.forEach(function (d, i) {
+            if (i === 0) return;
+            const t = sinAcentos(d);
+            ["insulto", "amenaza"].forEach(function (it) {
+                pts[it] += 2 * (t.match(MARCAS_DEF[it][0]) || []).length + (t.match(MARCAS_DEF[it][1]) || []).length;
+            });
+            const fig = /\b(persona|dicho de una persona|hombre|mujer|individuo)\b.*\b(despreciable|ruin|vil|mala|malvada|cruel|canalla|sinverguenza|desleal|traidora?|inutil|torpe|tonta?|necia?)\b/.test(t);
+            if (fig) pts.insulto += 3;
+        });
+        return pts.insulto >= 2 && pts.insulto >= pts.amenaza ? "insulto" : pts.amenaza >= 2 ? "amenaza" : null;
+    }
+    // Formas a probar en el diccionario: la palabra tal cual, sin pronombre/plural y un infinitivo posible
+    function candidatosPalabra(w) {
+        const c = [w];
+        const a = w.replace(/(ar|er|ir)(me|te|lo|la|se|nos|le|les)$/, "$1");
+        if (a !== w) c.push(a);
+        else if (w.length > 4 && /s$/.test(w)) c.push(w.slice(0, -1));
+        if (a !== w) { /* ya se le sacó el pronombre */ }
+        else if (/(aron|aste|amos|ando|ado|ais|an|as|a|o)$/.test(w)) c.push(w.replace(/(aron|aste|amos|ando|ado|ais|an|as|a|o)$/, "") + "ar");
+        else if (/(ieron|iste|iendo|ido|emos|en|es|e)$/.test(w)) c.push(w.replace(/(ieron|iste|iendo|ido|emos|en|es|e)$/, "") + "er");
+        return c.filter(function (x, i) { return x.length >= 3 && c.indexOf(x) === i; }).slice(0, 3);
+    }
+    // Promesa -> { titulo, defs, intent } | { nada: true } (no existe) | null (no se pudo consultar)
+    function consultarDiccionario(tok) {
+        const cands = candidatosPalabra(tok);
+        const probar = function (k) {
+            if (k >= cands.length) return Promise.resolve({ nada: true });
+            const url = "https://es.wiktionary.org/w/api.php?action=parse&prop=wikitext&redirects=1&format=json&formatversion=2&origin=*&page=" + encodeURIComponent(cands[k]);
+            return pedirJSON(url).then(function (j) {
+                if (!j) return null;
+                const wt = j.parse && j.parse.wikitext;
+                const crudo = typeof wt === "string" ? wt : (wt && wt["*"]) || "";
+                const defs = definiciones(crudo);
+                if (!defs.length) return probar(k + 1);
+                return { titulo: cands[k], defs: defs, intent: intencionDeDefs(defs, sinonimos(crudo)), alt: intencionAlterna(defs) };
+            });
+        };
+        return probar(0);
+    }
+    function recordarPalabraWeb(clave, intent, alt) {
+        WEB.pal[clave] = { i: intent || null, a: alt || null, t: Date.now() };
+        if (intent) {                                               // lo suma a lo aprendido para que lo use el clasificador de siempre
+            const a = APRENDIDO[raiz(clave)] = {};
+            a[intent] = 3;
+            guardarAprendido();
+        }
+        guardarWeb();
+    }
+    // Promesa -> { i: significado principal, a: significado ofensivo secundario } de una palabra que no conocía
+    function buscarPalabraWeb(tok) {
+        const clave = sinAcentos(tok);
+        const g = WEB.pal[clave];
+        if (g && (g.i || g.a || Date.now() - g.t < 3 * 86400000)) return Promise.resolve({ i: g.i || null, a: g.a || null });
+        return consultarDiccionario(tok).then(function (r) {
+            if (!r) return { i: null, a: null };                    // sin conexión: no se anota para volver a probar
+            recordarPalabraWeb(clave, r.intent, r.alt);
+            return { i: r.intent || null, a: r.alt || null };
+        });
+    }
+    // Palabras de la frase que no conoce (hasta 3, las más largas), con acentos tal como las dijiste
+    function palabrasDesconocidas(texto) {
+        const vistas = {}, lista = [];
+        String(texto).toLowerCase().replace(/[^a-záéíóúüñ0-9\s]/g, " ").split(/\s+/).forEach(function (tok) {
+            const w = sinAcentos(tok);
+            if (w.length < 4 || /\d/.test(w) || STOP.has(w) || vistas[w] || intencionPalabra(w)) return;
+            vistas[w] = 1;
+            lista.push(tok);
+        });
+        return lista.sort(function (a, b) { return b.length - a.length; }).slice(0, 3);
+    }
+    // Promesa -> { intent, palabras } si internet le explicó alguna palabra, o null
+    function entenderConInternet(lista, texto) {
+        // ¿Se lo decís a él? Una palabra suelta o con "vos/sos/te/tu..." sí; "tengo un perro" no
+        const aEl = String(texto || "").trim().split(/\s+/).length <= 2 || hablaConTigo(texto);
+        return Promise.all(lista.map(function (tok) {
+            return buscarPalabraWeb(tok).then(function (it) { return { p: tok, i: it.i || (aEl ? it.a : null) }; });
+        })).then(function (res) {
+            const puntos = {};
+            res.forEach(function (r) { if (r.i) puntos[r.i] = (puntos[r.i] || 0) + 1; });
+            let mejor = null, n = 0;
+            PRIORIDAD.forEach(function (it) { if ((puntos[it] || 0) > n) { n = puntos[it]; mejor = it; } });
+            return mejor ? { intent: mejor, palabras: res.filter(function (r) { return r.i; }).map(function (r) { return r.p; }) } : null;
+        });
+    }
+
+    // --- Wikipedia: resumen de un tema, partido en frases ---
+    function frasesDe(t) {
+        t = String(t || "").replace(/\s*\([^()]*\)/g, "").replace(/\s*\([^()]*\)/g, "").replace(/\s+/g, " ").replace(/ ([,.;:])/g, "$1").trim();
+        const partes = t.match(/[^.!?]+(?:[.!?]+["»”)]*|$)/g) || [];
+        const frases = [];
+        partes.forEach(function (p) {
+            p = p.trim();
+            if (!p) return;
+            const ult = frases[frases.length - 1];
+            if (ult && (/^[a-záéíóúñ]/.test(p) || /(?:\b[A-ZÁÉÍÓÚÑ]|\b(?:Sr|Sra|Dr|Dra|Ud|Uds|etc|aprox|núm|pág|vol|Lic|Ing|Av|Gral|Cap|Sta|Sto|EE)|\d [ad])\.$/.test(ult))) frases[frases.length - 1] = ult + " " + p;
+            else frases.push(p);
+        });
+        return frases.filter(function (f) { return f.length >= 12; }).slice(0, 6);
+    }
+    function cortarHabla(t, max) {
+        t = String(t || "").trim();
+        if (t.length <= max) return t;
+        const c = t.slice(0, max - 1), i = c.lastIndexOf(" ");
+        return (i > max * 0.5 ? c.slice(0, i) : c).replace(/[,;:\s]+$/, "") + "…";
+    }
+    // Promesa -> { titulo, frases } | { nada: true } | null (sin conexión). "estricto": el título tiene que parecerse a lo buscado
+    function resumenWiki(tema, estricto) {
+        const clave = sinAcentos(tema);
+        const g = WEB.tema[clave];
+        if (g && g.f && g.f.length) { g.t = Date.now(); return Promise.resolve({ titulo: g.ti, frases: g.f }); }
+        const url = "https://es.wikipedia.org/w/api.php?action=query&format=json&formatversion=2&origin=*&redirects=1&generator=search&gsrlimit=4" +
+            "&prop=extracts&exintro=1&explaintext=1&exlimit=4&exsentences=6&gsrsearch=" + encodeURIComponent(tema);
+        return pedirJSON(url).then(function (j) {
+            if (!j) return null;
+            let paginas = (j.query && j.query.pages) || [];
+            if (!Array.isArray(paginas)) paginas = Object.keys(paginas).map(function (k) { return paginas[k]; });
+            paginas.sort(function (a, b) { return (a.index || 99) - (b.index || 99); });
+            const palabras = clave.split(" ").filter(function (w) { return w.length >= 4 && !STOP.has(w); });
+            for (let i = 0; i < paginas.length; i++) {
+                const p = paginas[i], ext = String(p.extract || "").trim();
+                if (!ext || /(puede|pueden) (referirse|significar)|hace referencia a|desambiguaci/i.test(ext.slice(0, 220))) continue;
+                const frases = frasesDe(ext);
+                if (!frases.length) continue;
+                if (estricto) {
+                    const base = sinAcentos(p.title + " " + frases[0]);
+                    if (!palabras.some(function (w) { return base.indexOf(raiz(w)) >= 0; })) continue;
+                }
+                WEB.tema[clave] = { ti: p.title, f: frases, t: Date.now() };
+                guardarWeb();
+                return { titulo: p.title, frases: frases };
+            }
+            return { nada: true };
+        });
+    }
+
+    // --- Detectar qué quiere saber ---
+    const NO_TEMA = /^(?:este|esta|esto|eso|esa|ese|aquel|aquello|aqui|aca|alla|ahi|tu|tus|vos|tuyo|usted|yo|mi|mis|que|quien|como|donde|cuando)\b/;
+    function temaOriginal(texto, tema) {                  // el tema con los acentos que dijiste (Wikipedia busca mejor así)
+        const o = String(texto).toLowerCase().replace(/[^a-záéíóúüñ0-9\s]/g, " ").replace(/\s+/g, " ").trim().split(" ");
+        const n = tema.split(" ").length;
+        for (let i = o.length - n; i >= 0; i--) {
+            const cand = o.slice(i, i + n).join(" ");
+            if (sinAcentos(cand) === tema) return cand;
+        }
+        return tema;
+    }
+    function limpiarTema(s) {
+        s = String(s || "").replace(/\b(?:por favor|porfa|por fa|nomas|che|gracias|me podes decir|me decis)\b/g, " ")
+            .replace(/^(?:el|la|los|las|un|una|unos|unas|lo)\s+/, "").replace(/^(?:palabra|termino)\s+/, "").replace(/\s+/g, " ").trim();
+        return s.length >= 2 && s.length <= 60 && s.split(" ").length <= 7 && !NO_TEMA.test(s) ? s : null;
+    }
+    const SABER_RE = [
+        /^(?:y )?(?:que|quien|quienes) (?:es|son|fue|fueron|era|eran|seria|serian) (.+)$/,
+        /^(?:y )?(?:que|quien|quienes) (?:sabes|conoces) (?:de|sobre|acerca de|del) (.+)$/,
+        /^(?:sabes|conoces) (?:algo )?(?:de|sobre|acerca de|del|quien es|que es) (.+)$/,
+        /^(?:contame|cuentame|conta|decime|dime|hablame|habla|explicame|explica|informame|ensename) (?:algo )?(?:de|sobre|acerca de|del|que es|quien es) (.+)$/,
+        /^(?:donde|en donde) (?:queda|esta|estan|se encuentra|se encuentran) (.+)$/,
+        /^(?:cuando|donde) (?:nacio|murio|se fundo|se creo|se invento|ocurrio|empezo|termino) (.+)$/
+    ];
+    // -> { tipo: "saber" | "significado" | "mas", tema } o null si no es una consulta
+    function detectarConsulta(texto) {
+        const t = sinAcentos(texto);
+        if (!t || clasificarReglas(texto) === "pregunta") return null;
+        if (memoriaWeb && /^(?:y )?(?:que )?(?:mas|algo mas|segui|sigue|continua|continuar|contame mas|cuentame mas|decime mas|dime mas|conta mas|y despues)$/.test(t)) return { tipo: "mas", tema: memoriaWeb.titulo };
+        let m = /^(?:que )?(?:significa|quiere decir)(?: la palabra| el termino)? (.+)$/.exec(t) ||
+                /^(?:cual es el )?(?:significado|definicion) de(?: la palabra| el termino)? (.+)$/.exec(t) ||
+                /^(?:defini|define|definime|definir)(?: la palabra)? (.+)$/.exec(t);
+        if (m) { const x = limpiarTema(m[1]); return x ? { tipo: "significado", tema: temaOriginal(texto, x) } : null; }
+        m = /^cual es (?:la |el )?(capital|moneda|idioma|bandera|poblacion|superficie|himno|presidente|religion) (?:de|del) (.+)$/.exec(t);
+        if (m) { const x = limpiarTema(m[2]); return x ? { tipo: "saber", tema: m[1] + " de " + temaOriginal(texto, x) } : null; }
+        for (let i = 0; i < SABER_RE.length; i++) {
+            m = SABER_RE[i].exec(t);
+            if (m) { const x = limpiarTema(m[1]); return x ? { tipo: "saber", tema: temaOriginal(texto, x) } : null; }
+        }
+        return null;
+    }
+
+    // --- Contestar como una persona: el NPC habla (en globitos cortos, uno tras otro), sin avisos técnicos ---
+    let memoriaWeb = null;                                // lo último que explicó, para "contame más": { titulo, frases, pos }
+    function decirHud(texto, ms) {
+        lineaVoz.textContent = texto;
+        lineaVoz.style.opacity = "1";
+        clearTimeout(lineaVoz.t);
+        lineaVoz.t = setTimeout(function () { lineaVoz.style.opacity = "0"; }, ms || 5000);
+    }
+    function npcsOyentes(x, z, radio) {
+        const casaH = casaDe(x, z), l = [];
+        for (const n of NPCS) {
+            if (n.caido) continue;
+            const d = Math.hypot(n.x - x, n.z - z);
+            if (d <= radio * (casaDe(n.x, n.z) === casaH ? 1 : 0.5)) l.push({ n: n, d: d });
+        }
+        return l.sort(function (a, b) { return a.d - b.d; });
+    }
+    // Quién contesta: el NPC más cercano que no esté de mal humor con vos (si todos lo están, el más cercano se niega)
+    function elegirRespondedor() {
+        const oy = npcsOyentes(px, pz, 12), yo = idPropio();
+        if (!oy.length) return null;
+        for (let i = 0; i < oy.length; i++) {
+            const n = oy[i].n;
+            if (n.tipo !== "agresivo" && !(n.ofendidoPor && n.ofendidoPor[yo])) return { n: n, hostil: false };
+        }
+        return { n: oy[0].n, hostil: true };
+    }
+    // Parte un texto en globitos de a lo sumo "max" letras, cortando en espacios
+    function partirHabla(t, max) {
+        const partes = [];
+        let resto = String(t || "").replace(/\s+/g, " ").trim();
+        while (resto.length > max) {
+            let i = resto.lastIndexOf(" ", max - 1);
+            if (i < max * 0.4) i = max;
+            partes.push(resto.slice(0, i).trim());
+            resto = resto.slice(i).trim();
+        }
+        if (resto) partes.push(resto);
+        return partes;
+    }
+    function decirUnaVez(n, texto) {
+        if (esAutoridad()) hablarNpc(n, texto, true);
+        else { mostrarHablaNpc(n.i, texto); enviarRed({ tipo: "npcdice", i: n.i, t: texto }); }     // el servidor se lo muestra a los demás
+    }
+    // El NPC dice varias cosas seguidas (cada globito dura ~2,6 s; el servidor deja uno cada 2 s)
+    function hablarSeguido(n, textos) {
+        let partes = [];
+        textos.forEach(function (t) { partes = partes.concat(partirHabla(t, 100)); });
+        partes.slice(0, 5).forEach(function (p, i) { setTimeout(function () { decirUnaVez(n, p); }, i * 2900); });
+    }
+    function elegirPorTipo(n, o) { return elegirTexto(o[n.tipo] || o.pacifico); }
+    const MULETILLA = {
+        pacifico: ["Ah, mirá...", "Que yo sepa...", "Mmm, creo que..."],
+        cobarde: ["E-eh... creo que...", "N-no sé mucho, pero..."],
+        defensor: ["A ver...", "Mirá..."]
+    };
+    const PENSANDO = { pacifico: "Mmm... dejame pensar...", cobarde: "E-eh... a ver...", defensor: "Eh... esperá un poco..." };
+    const NO_SE = {
+        pacifico: ["Mmm, de eso no tengo ni idea.", "Uh, eso no lo sé, perdoname."],
+        cobarde: ["N-no sé nada de eso..."], defensor: ["No sé, che. De eso no entiendo."]
+    };
+    const NO_ME_ACUERDO = {
+        pacifico: ["Uf, ahora no me acuerdo de nada..."], cobarde: ["P-perdón, me quedé en blanco..."], defensor: ["Se me fue, no me sale ahora."]
+    };
+    // r: lo que encontró ({ titulo, frases } / { nada } / null si no pudo averiguar); el NPC lo cuenta con sus palabras
+    function contarComoPersona(n, r, conMuletilla) {
+        if (r === null) { hablarSeguido(n, [elegirPorTipo(n, NO_ME_ACUERDO)]); return; }
+        if (r.nada || !r.frases || !r.frases.length) { hablarSeguido(n, [elegirPorTipo(n, NO_SE)]); return; }
+        memoriaWeb = { titulo: r.titulo, frases: r.frases, pos: 0 };
+        hablarSeguido(n, conMuletilla ? [elegirPorTipo(n, MULETILLA), r.frases[0]] : [r.frases[0]]);
+    }
+    function responderConsulta(c) {
+        const quien = elegirRespondedor();
+        if (!quien) { decirHud("No hay nadie cerca que te escuche", 3000); return; }
+        const n = quien.n;
+        if (quien.hostil) { hablarSeguido(n, ["No tengo ganas de charlar."]); return; }
+        if (c.tipo === "mas") {
+            const m = memoriaWeb;
+            m.pos++;
+            if (m.pos >= m.frases.length) { m.pos = m.frases.length; hablarSeguido(n, ["Eso es todo lo que sé de eso."]); }
+            else hablarSeguido(n, [m.frases[m.pos]]);
+            return;
+        }
+        let contesto = false;
+        const reloj = setTimeout(function () { if (!contesto) { contesto = true; decirUnaVez(n, PENSANDO[n.tipo] || PENSANDO.pacifico); } }, 1500);
+        const listo = function (r) { clearTimeout(reloj); setTimeout(function () { contarComoPersona(n, r, true); }, contesto ? 2900 : 0); };
+        if (c.tipo === "significado") {
+            consultarDiccionario(c.tema).then(function (r) {
+                if (r && r.defs) {
+                    recordarPalabraWeb(sinAcentos(c.tema), r.intent);        // de paso aprende la palabra
+                    listo({ titulo: r.titulo, frases: r.defs });
+                } else listo(r);
+            });
+        } else resumenWiki(c.tema, false).then(listo);
+    }
+
+    // Un NPC te regala algo: queda en el piso a su lado (y en un servidor lo ven todos)
+    function darItemNpc(n, itemId, haciaX, haciaZ) {
+        const d = Math.hypot(haciaX - n.x, haciaZ - n.z) || 1;
+        const x = n.x + (haciaX - n.x) / d * 0.8, z = n.z + (haciaZ - n.z) / d * 0.8;
+        const it = { id: itemId, x: x, y: 0.02, z: z };
+        if (conexion && miId !== null) {
+            it.k = "d" + miId + "_" + (++contSuelto);
+            itemsRed.suel[it.k] = { id: itemId, x: x, y: it.y, z: z, c: null };
+            enviarRed({ tipo: "soltar", k: it.k, id: itemId, x: x, y: it.y, z: z, c: null });
+        }
+        inv.mundo.push(it);
+    }
+
+    // ----- Cuando no entiende: dice QUÉ no entendió, pregunta a qué te referís y a veces te discute (según cómo es) -----
+    function recortarTxt(t, max) { t = String(t || "").trim(); return t.length > max ? t.slice(0, max - 1).trim() + "…" : t; }
+    function respuestaNoEntendi(n, texto) {
+        const crudo = String(texto || "").replace(/[¿?¡!"“”<>]/g, " ").replace(/\s+/g, " ").trim();
+        if (!crudo) return "¿Eh? No te entendí.";
+        const t = sinAcentos(texto);
+        const tipo = n.tipo, duro = tipo === "agresivo" || tipo === "defensor";
+        const pick = elegirTexto;
+        // te dijo que te sueña: le llama la atención, no es un pedido
+        if (esSonarConAlguien(texto)) {
+            if (tipo === "pacifico") return pick(["¿Me soñás? Qué cosa más rara... ¿y cómo son esos sueños?", "Ay, ¿en serio soñás conmigo? No sé qué decirte."]);
+            if (tipo === "cobarde") return pick(["¿M-me soñás? Eso... da un poco de miedo.", "¿S-soñás conmigo? No sé si me gusta..."]);
+            if (tipo === "defensor") return pick(["¿Soñás conmigo? Raro. Ni nos conocemos.", "Eso es medio raro, ¿no? No te conozco."]);
+            return pick(["¿Qué? No me sueñes, ¿entendiste?", "Qué raro sos. No me soñés."]);
+        }
+        // te dijo que no le falta nada ("no tengo hambre", "ya comí")
+        if (esNegarNecesidad(texto)) {
+            if (tipo === "pacifico") return pick(["Ah, qué bueno. Igual si algo te falta, decime.", "Me alegro, entonces. Cualquier cosa avisame."]);
+            if (tipo === "cobarde") return pick(["A-ah, bueno... mejor.", "Ah, ok... qué bien."]);
+            if (tipo === "defensor") return pick(["Bien. Entonces no hay más que hablar.", "Perfecto. Eso te ahorra el pedido."]);
+            return pick(["Mejor para vos.", "Bien. No te iba a dar nada igual."]);
+        }
+        // la palabra más rara/larga que dijiste (sin las palabras comunes)
+        // risas: pregunta de qué te reís
+        if (/\b(?:(?:j[aeiou]){2,}j?|ha(?:ha)+|he(?:he)+|lol|xd+|kkk+)\b/.test(t) && t.split(" ").length <= 3)
+            return tipo === "pacifico" ? pick(["Jaja... ¿de qué te reís?", "¿Qué es tan gracioso?"]) : tipo === "cobarde" ? pick(["¿D-de qué te reís?", "¿Me... me estás cargando?"]) : pick(["¿De qué te reís?", "¿Te parece gracioso?"]);
+        const IGNORAR = new Set(["significa", "signific", "sabes", "decime", "dime", "contame", "cuentame", "quiere", "decir", "palabra", "llama", "llamas", "siempre", "nunca", "todos", "nadie", "obvio", "obviamente", "seguro", "claramente", "jamas", "pero", "entonces", "bueno", "porque"]);
+        const toks = crudo.split(" ").filter(function (w) { const x = sinAcentos(w); return x.length >= 4 && !STOP.has(x) && !IGNORAR.has(x) && !intencionPalabra(x); });
+        toks.sort(function (a, b) { return b.length - a.length; });
+        const raro = toks[0] ? recortarTxt(toks[0], 18) : "";
+        let r;
+        // 1) afirmaste algo ("el cielo es verde"): algunos te discuten
+        const af = /^(?:que |pero )?((?:el|la|los|las|un|una|mi|tu|su) .{2,28}?|[a-z]{3,16}) (es|son|era|eran|fue|seria) (.{2,34})$/.exec(t);
+        if (af && !/\?/.test(texto) && !/^(que|como|cual|quien|donde|cuando|por que)\b/.test(t) && Math.random() < (duro ? 0.7 : 0.5)) {
+            const suj = af[1], verbo = af[2], pred = af[3];
+            if (tipo === "pacifico") r = pick(["¿En serio " + suj + " " + verbo + " " + pred + "? A mí no me cierra...", "Mmm, no sé... ¿" + suj + " " + verbo + " " + pred + "? Yo lo vi distinto."]);
+            else if (tipo === "cobarde") r = pick(["¿S-seguro que " + suj + " " + verbo + " " + pred + "? Yo no creo...", "Eh... no, no me parece que " + suj + " " + verbo + " " + pred + "."]);
+            else if (tipo === "defensor") r = pick(["Ahí te equivocás: " + suj + " no " + verbo + " " + pred + ".", "¿" + suj + " " + verbo + " " + pred + "? Dejate de decir cosas."]);
+            else r = pick(["¿" + suj + " " + verbo + " " + pred + "? Qué estupideces decís.", "Estás equivocado, " + suj + " no " + verbo + " " + pred + "."]);
+            return recortarTxt(r, 100);
+        }
+        // 2) opinaste con algo tajante ("siempre", "nunca", "todos", "obvio"...): te lo discuten
+        const tajante = /\b(siempre|nunca|todos|nadie|obvio|obviamente|seguro|claramente|jamas)\b/.exec(t);
+        if (tajante && Math.random() < 0.6) {
+            const k = tajante[1];
+            if (tipo === "pacifico") r = pick(["¿\"" + k + "\"? Yo no diría tanto, siempre hay excepciones.", "No sé, decir \"" + k + "\" es medio exagerado, ¿no?"]);
+            else if (tipo === "cobarde") r = pick(["¿\"" + k + "\"? Eh... no sé si es tan así.", "D-decir \"" + k + "\" es mucho... digo, creo."]);
+            else r = pick(["¿\"" + k + "\"? Eso no es verdad y lo sabés.", "No me vengas con \"" + k + "\", no es así."]);
+            return recortarTxt(r, 100);
+        }
+        // 3) preguntaste algo que no sabe
+        if (/\?/.test(texto) || /^(que|como|cual|cuales|quien|quienes|donde|cuando|cuanto|por que|para que)\b/.test(t)) {
+            if (raro) r = tipo === "pacifico" ? pick(["Uf, de \"" + raro + "\" no sé nada. ¿Por qué lo preguntás?", "Eso de \"" + raro + "\"... ni idea. ¿Para qué lo querés saber?"])
+                : tipo === "cobarde" ? pick(["N-no sé qué es \"" + raro + "\"... perdón.", "¿\"" + raro + "\"? No sé nada de eso, de verdad."])
+                : pick(["¿Y yo cómo voy a saber de \"" + raro + "\"?", "No sé de \"" + raro + "\" ni me importa."]);
+            else r = tipo === "pacifico" ? "Mmm, esa no te la sé contestar. ¿A qué te referís?" : tipo === "cobarde" ? "N-no sé qué responderte..." : "Qué pregunta rara. No sé.";
+            return recortarTxt(r, 100);
+        }
+        // 4) no entendió una palabra: lo dice y pide que se lo expliques
+        if (raro) {
+            if (tipo === "pacifico") r = pick(["¿Lo de \"" + raro + "\"? No sé a qué te referís, ¿me lo explicás?", "Perdón, no te seguí con \"" + raro + "\". ¿Qué querés decir?", "Se me escapó lo de \"" + raro + "\", ¿me lo decís de otra forma?"]);
+            else if (tipo === "cobarde") r = pick(["¿L-lo de \"" + raro + "\"? No te sigo...", "E-eso de \"" + raro + "\"... no entiendo qué querés decir."]);
+            else if (tipo === "defensor") r = pick(["¿Lo de \"" + raro + "\"? Hablá claro, que no te sigo.", "No entiendo qué tiene que ver \"" + raro + "\". Explicate."]);
+            else r = pick(["¿\"" + raro + "\"? ¿Qué querés decir con eso?", "Hablá bien. ¿Qué pasa con \"" + raro + "\"?"]);
+            return recortarTxt(r, 100);
+        }
+        // 4b) comentario sobre el lugar o el clima ("el agua está linda", "qué día horrible"): no es para él, pero se contesta como charla
+        if (/\b(linda|lindo|bonita|bonito|hermosa|hermoso|fea|feo|horrible|fria|frio|calor|lindo dia|dia)\b/.test(t) && /\b(el|la|los|las|que|esta|esta|hace|hoy|se ve|este|esta)\b/.test(t) && !/\b(vos|tu|tus|usted|ustedes)\b/.test(t)) {
+            if (tipo === "pacifico") r = pick(["Y sí... por lo menos algo lindo queda, ¿no?", "Mmm, puede ser. Cuesta ver lo bueno, pero algo hay."]);
+            else if (tipo === "cobarde") r = pick(["S-sí, supongo... si no pasa nada raro.", "Eh... sí, puede ser."]);
+            else if (tipo === "defensor") r = pick(["Puede ser. Pero no te quedes mirando mi casa.", "Sí, sí. ¿Y vos qué querés?"]);
+            else r = pick(["¿Y a mí qué me importa?", "No vine a charlar del clima."]);
+            return recortarTxt(r, 100);
+        }
+        // 5) frase corta o sin palabras raras
+        const corta = recortarTxt(crudo, 30);
+        if (crudo.split(" ").length <= 2) r = pick(["¿\"" + corta + "\"? ¿Y eso qué quiere decir?", "¿Solo \"" + corta + "\"? Contame un poco más."]);
+        else r = pick(["Se me perdió el hilo con \"" + corta + "\"... ¿me lo repetís?", "No te seguí con lo de \"" + corta + "\". ¿Qué querías decir?"]);
+        if (duro) r = pick(["No te entendí nada. Hablá claro.", "¿Qué decís? Repetilo bien."]);
+        return recortarTxt(r, 100);
+    }
+
+    // ----- Memoria de los NPCs: se guarda con la partida (offline) para que te recuerden al volver -----
+    // Los tiempos se guardan como "hace cuánto" (performance.now() arranca de cero en cada sesión).
+    function exportarMemoriaNpcs() {
+        const ahoraMs = performance.now(), lista = [];
+        NPCS.forEach(function (n) {
+            const e = { i: n.i };
+            let hay = false;
+            if (n.dio) { e.dio = 1; e.dioItem = n.dioItem || null; e.dioHace = n.dioT ? Math.max(0, Math.round(ahoraMs - n.dioT)) : 0; hay = true; }
+            const gol = Object.keys(n.golpeadoPor || {}).filter(function (k) { return n.golpeadoPor[k]; });
+            const ofe = Object.keys(n.ofendidoPor || {}).filter(function (k) { return n.ofendidoPor[k]; });
+            if (gol.length) { e.gol = gol; hay = true; }
+            if (ofe.length) { e.ofe = ofe; hay = true; }
+            const conf = {};
+            for (const k in (n.confPor || {})) { const c = n.confPor[k]; if (c && c.v > 0) conf[k] = { v: c.v, hace: Math.max(0, Math.round(ahoraMs - c.t)) }; }
+            if (Object.keys(conf).length) { e.conf = conf; hay = true; }
+            const memo = {};
+            for (const k in (n.memo || {})) { const m = n.memo[k]; if (m && m.ult) memo[k] = { ult: m.ult, hace: Math.max(0, Math.round(ahoraMs - m.t)), den: m.den || 0 }; }
+            if (Object.keys(memo).length) { e.memo = memo; hay = true; }
+            if (hay) lista.push(e);
+        });
+        return lista;
+    }
+    function importarMemoriaNpcs(datos) {
+        const ahoraMs = performance.now();
+        NPCS.forEach(function (n) {                       // arranca de cero: no arrastra lo de otra partida con el mismo mapa
+            n.dio = false; n.dioItem = null; n.dioT = 0;
+            n.golpeadoPor = {}; n.ofendidoPor = {}; n.confPor = {}; n.memo = {};
+            n.calmaPor = {}; n.asustadoPor = {};
+        });
+        if (!Array.isArray(datos)) return;
+        const num = function (v, max) { v = +v; return isFinite(v) ? Math.max(0, Math.min(max, v)) : 0; };
+        datos.slice(0, 500).forEach(function (e) {
+            const n = e && NPCS[e.i];
+            if (!n) return;
+            if (e.dio) { n.dio = true; n.dioItem = e.dioItem === "agua" || e.dioItem === "comida" ? e.dioItem : null; n.dioT = ahoraMs - num(e.dioHace, 1e12); }
+            (Array.isArray(e.gol) ? e.gol : []).slice(0, 20).forEach(function (k) { n.golpeadoPor[String(k)] = true; });
+            (Array.isArray(e.ofe) ? e.ofe : []).slice(0, 20).forEach(function (k) { n.ofendidoPor[String(k)] = true; });
+            for (const k in (e.conf || {})) { const c = e.conf[k]; if (c) n.confPor[k] = { v: Math.min(6, num(c.v, 6)), t: ahoraMs - num(c.hace, 1e12) }; }
+            for (const k in (e.memo || {})) {
+                const m = e.memo[k];
+                if (m && INTENCIONES_OK.indexOf(m.ult) >= 0) n.memo[k] = { ult: m.ult, t: ahoraMs - num(m.hace, 1e12), den: num(m.den, 10), denT: 0 };
+            }
+        });
+    }
+    window.MemoriaNpcs = { exportar: exportarMemoriaNpcs, importar: importarMemoriaNpcs };
+
+    // Qué hace un NPC que te oyó, según lo que dijiste y cómo es él (solo lo corre quien maneja a los NPCs)
+    function reaccionNpc(n, idJ, intent, grito, primero, x, z, texto) {
+        const ahoraMs = performance.now();
+        const hab = function (t) { if (primero) hablarNpc(n, t, true); };
+        const tipo = n.tipo;
+        const duro = tipo === "agresivo" || tipo === "defensor";
+        // Memoria: de qué hablaron la última vez y hace cuánto (por NPC y por jugador), para no contestar siempre como la primera vez
+        if (!n.memo) n.memo = {};
+        const mem = n.memo[idJ] || (n.memo[idJ] = { ult: null, t: 0, den: 0, denT: 0 });
+        const ult = mem.ult, hace = ahoraMs - mem.t;
+        const peleaReciente = (ult === "amenaza" || ult === "insulto") && hace < 90000;
+        mem.t = ahoraMs;
+        if (intent !== "desconocido") mem.ult = intent;
+        // Confianza: no se gana con una sola frase. Sube de a 1 (como mucho cada 8 s) si le hablás bien, se enfría con el tiempo
+        // (-1 por minuto) y se pierde del todo si lo amenazás, insultás o golpeás.
+        if (!n.confPor) n.confPor = {};
+        const confianza = function () {
+            const c = n.confPor[idJ];
+            return c ? Math.max(0, c.v - Math.floor((ahoraMs - c.t) / 60000)) : 0;
+        };
+        const ganarConfianza = function () {
+            const c = n.confPor[idJ];
+            if (c && ahoraMs - c.t < 8000) return;           // repetir lo mismo rápido no suma
+            n.confPor[idJ] = { v: Math.min(6, confianza() + 1), t: ahoraMs };
+        };
+        const dar = function () {
+            if (n.dio) { hab("Ya te di lo que tenía."); return; }
+            n.dio = true; n.dioT = ahoraMs;
+            n.dioItem = elegirTexto(["agua", "comida"]);
+            darItemNpc(n, n.dioItem, x, z);
+            hab("Tomá, llevate esto.");
+        };
+        // gritar enoja o asusta, y no calma a nadie
+        if (grito && intent !== "amenaza" && intent !== "insulto") {
+            if (duro) hab("¡Y a mí no me grités!");
+            else { n.asustadoPor[idJ] = ahoraMs + 6000; hab("¡No grites, por favor!"); }
+            return;
+        }
+        switch (intent) {
+            case "amenaza":
+                delete n.calmaPor[idJ]; delete n.confPor[idJ];
+                if (duro) { n.ofendidoPor[idJ] = true; hab(elegirTexto(["¿Me estás amenazando en mi casa?", "¡Ahora sí te la busqué!"])); }
+                else { n.asustadoPor[idJ] = ahoraMs + 10000; hab(tipo === "cobarde" ? "¡No, por favor, no!" : "Tranquilo... no quiero problemas."); }
+                break;
+            case "insulto":
+                delete n.confPor[idJ];
+                if (duro) { n.ofendidoPor[idJ] = true; delete n.calmaPor[idJ]; hab("¿Qué dijiste?"); }
+                else if (tipo === "cobarde") hab("Eso... eso no se dice.");
+                else hab("No hace falta insultar.");
+                break;
+            case "calma": {
+                delete n.asustadoPor[idJ];
+                if (peleaReciente) {            // recién lo amenazaste o insultaste: no se la cree todavía
+                    hab(tipo === "pacifico" ? "Recién me dijiste cosas feas... dame un rato." : tipo === "cobarde" ? "H-hace nada me asustaste..." : "Hace un segundo me amenazabas. No te creo.");
+                    break;
+                }
+                ganarConfianza();
+                const c = confianza();
+                if (tipo === "agresivo") {
+                    if (c >= 4) { n.calmaPor[idJ] = ahoraMs + 12000; hab("Mmm... más te vale."); }
+                    else hab(elegirTexto(["No te creo nada.", "Hablás lindo, pero no te conozco."]));
+                } else if (tipo === "defensor") {
+                    if (c >= 3) { n.calmaPor[idJ] = ahoraMs + 20000; hab("Bueno... pero no toques nada."); }
+                    else hab(elegirTexto(["Mmm. Eso dicen todos.", "Veremos. Mirá sin tocar."]));
+                } else if (tipo === "cobarde") {
+                    if (c >= 2) { n.calmaPor[idJ] = ahoraMs + 15000; delete n.golpeadoPor[idJ]; hab("¿D-de verdad? ...bueno."); }
+                    else hab(elegirTexto(["N-no sé... no te conozco.", "¿Seguro? Es que me da miedo..."]));
+                } else {
+                    if (c >= 2) { delete n.golpeadoPor[idJ]; hab("Gracias, se agradece."); }
+                    else hab(elegirTexto(["Mmm, está bien... gracias.", "Ojalá, eh. Todavía no te conozco."]));
+                }
+                break;
+            }
+            case "ayuda": {
+                // se ayuda a quien ya se ganó la confianza (saludar, hablar bien, agradecer); a quien lastimó u ofendió, no
+                if (n.dio) { hab("Ya te di lo que tenía."); break; }
+                if (n.golpeadoPor[idJ] || n.ofendidoPor[idJ]) { hab("Después de lo que hiciste, no te pienso ayudar."); break; }
+                const c = confianza();
+                if (tipo === "agresivo") hab("¡No te voy a dar nada!");
+                else if (c >= (tipo === "pacifico" ? 2 : tipo === "cobarde" ? 3 : 4)) dar();
+                else {
+                    // pedir una y otra vez no sirve: a la tercera lo toma a mal y pierde confianza
+                    mem.den = ahoraMs - mem.denT < 60000 ? mem.den + 1 : 1;
+                    mem.denT = ahoraMs;
+                    if (mem.den >= 3) {
+                        n.confPor[idJ] = { v: Math.max(0, c - 1), t: ahoraMs };
+                        hab(tipo === "pacifico" ? "Ya te dije... no insistas, que me incomodás." : tipo === "cobarde" ? "P-por favor, no insistas..." : "Ya te dije que no. No insistas.");
+                    } else if (mem.den === 2) {
+                        hab(tipo === "pacifico" ? "Ya te dije: primero charlemos un poco." : tipo === "cobarde" ? "Y-ya te dije que no te conozco..." : "Ya te contesté.");
+                    } else if (tipo === "pacifico") hab(elegirTexto(["Mmm... recién te conozco. Charlemos un poco primero.", "¿Y vos quién sos? Contame algo antes de pedirme."]));
+                    else if (tipo === "cobarde") hab(elegirTexto(["N-no sé... no te conozco. No me pidas cosas.", "P-perdón, no tengo mucho para dar..."]));
+                    else hab(elegirTexto(["¿Y vos quién sos para pedirme cosas?", "Mmm... no tengo para andar regalando."]));
+                }
+                break;
+            }
+            case "saludo":
+                if (peleaReciente) {
+                    hab(tipo === "pacifico" ? "¿Ahora me saludás? Después de lo que dijiste..." : tipo === "cobarde" ? "H-hola... pero me asustaste." : tipo === "defensor" ? "No me vengas con saludos después de eso." : "¿Ahora saludás? Andate.");
+                } else if (ult === "saludo" && hace < 120000) {          // ya se saludaron hace un rato: no suma confianza repetirlo
+                    hab(tipo === "pacifico" ? "Ya nos saludamos, jaja. ¿Necesitás algo?" : tipo === "cobarde" ? "Y-ya me saludaste..." : "Ya te escuché. ¿Qué querés?");
+                } else {
+                    ganarConfianza();
+                    if (ult && hace > 180000 && tipo === "pacifico") hab("¡Volviste! ¿Cómo andás?");
+                    else hab(tipo === "pacifico" ? "¡Hola! ¿Todo bien?" : tipo === "cobarde" ? "H-hola..." : tipo === "defensor" ? "Buenas. Mirá sin tocar." : "¿Qué querés?");
+                }
+                break;
+            case "gracias":
+                if (!(ult === "gracias" && hace < 120000)) ganarConfianza();
+                if (n.dio && n.dioT && ahoraMs - n.dioT < 60000) hab(tipo === "pacifico" ? "De nada. Cuidalo, que no sobra." : "Sí, sí. No lo desperdicies.");
+                else hab(tipo === "pacifico" ? "De nada, por favor." : "Sí, sí.");
+                break;
+            case "despedida":
+                hab(tipo === "pacifico" ? "Chau, cuidate mucho." : tipo === "agresivo" ? "Y no vuelvas." : "Chau.");
+                break;
+            case "pregunta":
+                if (n.dio) { hab("Te di " + (n.dioItem || "lo que tenía") + ". Cuidalo, no sobra."); break; }
+                hab(tipo === "pacifico" ? "Vivo acá, ¿y vos?" : tipo === "cobarde" ? "Y-yo solo vivo acá..." : "Eso no te importa.");
+                break;
+            default:
+                hab(respuestaNoEntendi(n, texto));
+        }
+    }
+
+    // Alguien (en x, z) dijo algo con tal volumen: lo oyen los NPCs dentro del alcance (las paredes lo achican a la mitad)
+    function reaccionarVoz(idJ, x, z, intent, radio, grito, texto) {
+        if (INTENCIONES_OK.indexOf(intent) < 0 || !(radio > 0) || typeof x !== "number" || typeof z !== "number") return;
+        const casaH = casaDe(x, z);
+        const oyentes = [];
+        for (const n of NPCS) {
+            if (n.caido) continue;
+            const d = Math.hypot(n.x - x, n.z - z);
+            if (d <= radio * (casaDe(n.x, n.z) === casaH ? 1 : 0.5)) oyentes.push({ n: n, d: d });
+        }
+        oyentes.sort(function (a, b) { return a.d - b.d; });
+        oyentes.forEach(function (o, i) { reaccionNpc(o.n, idJ, intent, !!grito, i === 0, x, z, texto); });
+    }
+
+    // Lo que dijiste (por voz o escrito): se interpreta y se manda a quien maneja a los NPCs
+    // Lo último que se entendió (para que un "sí" o un "te lo juro" retome ese tema)
+    let ultimaIntencion = { intent: null, t: 0 };
+    function esConfirmacion(texto) {
+        return /^(?:(?:si|sii+|sip|claro|obvio|obviamente|seguro|por supuesto|de verdad|en serio|de una|dale|ya te dije|te lo juro|lo juro|te lo prometo|lo prometo|palabra|jurado|confia|confia en mi|creeme|cree en mi)(?: que si| de verdad| en serio| te lo juro| te lo prometo)?\s*)+$/.test(sinAcentos(texto));
+    }
+    function procesarFrase(texto, escrito) {
+        texto = String(texto || "").trim().slice(0, 140);
+        if (!texto || !sv.activo || !sv.vivo) return;
+        const leccion = ensenar(texto);
+        if (leccion) {
+            decirHud("🧠 Aprendí: " + leccion.palabras.join(", ") + " = " + NOMBRE_INTENCION[leccion.intent], 5000);
+            return;
+        }
+        const radio = escrito ? 8 : Math.max(6, voz.pico);          // hablando se usa el volumen reciente de tu micrófono
+        const grito = !escrito && radio >= 15;
+        // ¿Quiere saber algo? ("¿qué es un volcán?", "contame sobre Japón", "contame más"): se contesta con lo que dice internet
+        const consulta = detectarConsulta(texto);
+        if (consulta) { responderConsulta(consulta); return; }
+        // "te sueño" / "soñé con vos": no es un pedido de ayuda. Se manda como frase sin clasificar y cada NPC contesta según cómo es
+        if (esSonarConAlguien(texto)) { terminarFrase(texto, "desconocido", radio, grito, ""); return; }
+        if (esNegarNecesidad(texto)) { terminarFrase(texto, "desconocido", radio, grito, ""); return; }
+        // "¿De verdad?" -> "Sí": si hace poco dijiste algo claro, la confirmación vale por ese mismo tema
+        if (esConfirmacion(texto) && ultimaIntencion.intent && performance.now() - ultimaIntencion.t < 30000 &&
+            ["calma", "ayuda", "amenaza"].indexOf(ultimaIntencion.intent) >= 0) {
+            terminarFrase(texto, ultimaIntencion.intent, radio, grito, " (confirmando)"); return;
+        }
+        const intent = clasificarFrase(texto);
+        if (intent !== "desconocido") { terminarFrase(texto, intent, radio, grito, ""); return; }
+        // No la entiende: busca en internet (sin avisar) las palabras que no conoce y, si es algo corto, si es un tema conocido
+        const lista = palabrasDesconocidas(texto);
+        // Internet solo sirve para interpretar: si no preguntaste nada ("¿qué es...?", "contame sobre..."), nunca suelta datos
+        if (!lista.length) { terminarFrase(texto, "desconocido", radio, grito, ""); return; }
+        entenderConInternet(lista, texto).then(function (r) {
+            terminarFrase(texto, r ? r.intent : "desconocido", radio, grito, "");
+        });
+    }
+    // Ya sabe qué quisiste decir: lo anota, lo muestra y los NPCs reaccionan
+    function terminarFrase(texto, intent, radio, grito, extra) {
+        if (intent !== "desconocido") ultimaIntencion = { intent: intent, t: performance.now() };
+        const nuevas = aprenderDe(texto, intent);
+        decirHud("Dijiste: “" + texto + "” → " + NOMBRE_INTENCION[intent] + (grito ? " (gritando)" : "") + (extra || "") +
+            (nuevas.length ? " · 🧠 aprendí: " + nuevas.join(", ") : ""), 5000);
+        if (esAutoridad()) reaccionarVoz(idPropio(), px, pz, intent, radio, grito, texto);
+        else enviarRed({ tipo: "vozdice", intent: intent, r: radio, g: grito ? 1 : 0, t: intent === "desconocido" ? texto : "" });
+    }
+
+    function iniciarReconocimiento() {
+        const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (!SR) { avisar("Este navegador no reconoce voz: usá el botón 💬 para escribirles", 4000); return; }
+        try {
+            const rec = new SR();
+            rec.lang = "es-AR";
+            rec.continuous = true;
+            rec.interimResults = false;
+            rec.onresult = function (e) {
+                for (let i = e.resultIndex; i < e.results.length; i++) {
+                    if (e.results[i].isFinal) procesarFrase(e.results[i][0].transcript, false);
+                }
+            };
+            rec.onend = function () { if (voz.activo && voz.rec === rec) { try { rec.start(); } catch (err) {} } };
+            rec.onerror = function (e) {
+                if (e.error === "not-allowed" || e.error === "service-not-allowed") {
+                    avisar("No hay permiso para reconocer voz: usá el botón 💬", 3500);
+                    voz.rec = null;
+                }
+            };
+            voz.rec = rec;
+            rec.start();
+        } catch (e) { voz.rec = null; }
+    }
+    function detenerReconocimiento() {
+        const rec = voz.rec;
+        voz.rec = null;
+        if (rec) { rec.onend = null; try { rec.stop(); } catch (e) {} }
+    }
+    botonTexto.addEventListener("click", function () {
+        botonTexto.blur();
+        if (document.pointerLockElement) { try { document.exitPointerLock(); } catch (e) {} }
+        const t = window.prompt("¿Qué les decís a los NPCs que tengas cerca?");
+        if (t) procesarFrase(t, true);
+    });
+
+    function actualizarVoz(dt) {
+        const visible = !!sv.activo;
+        if (cajaVoz.style.display !== (visible ? "block" : "none")) cajaVoz.style.display = visible ? "block" : "none";
+        if (!voz.activo) { if (botonVoz.textContent !== "🎤 Voz: off") botonVoz.textContent = "🎤 Voz: off"; return; }
+        if (!sv.activo) { desactivarMicrofono(); return; }
+
+        // volumen del cuadro (RMS en decibeles)
+        voz.analizador.getFloatTimeDomainData(voz.buf);
+        let suma = 0;
+        for (let i = 0; i < voz.buf.length; i++) suma += voz.buf[i] * voz.buf[i];
+        const db = 20 * Math.log10(Math.max(Math.sqrt(suma / voz.buf.length), 1e-5));
+
+        // ruido de fondo: al principio se calibra rápido; después baja rápido y sube muy de a poco
+        if (voz.calib > 0) { voz.calib -= dt; voz.sueloDb += (db - voz.sueloDb) * Math.min(1, dt * 4); }
+        else voz.sueloDb += (db - voz.sueloDb) * Math.min(1, dt * (db < voz.sueloDb ? 2 : 0.05));
+
+        // 0 = silencio, 1 = gritando (30 dB por encima del ruido de fondo)
+        const sobre = voz.calib > 0 ? 0 : db - Math.max(voz.sueloDb + 8, -55);
+        const objetivo = Math.max(0, Math.min(1, sobre / 30));
+        voz.nivel += (objetivo - voz.nivel) * Math.min(1, dt * (objetivo > voz.nivel ? 20 : 3));
+        voz.radio = voz.nivel > 0.05 ? 2 + voz.nivel * 18 : 0;       // susurro ~2 m, hablar ~8 m, grito ~20 m
+        // el reconocimiento de voz contesta un rato después de hablar: se acuerda del volumen más alto de los últimos 5 s
+        const tAhora = performance.now();
+        if (voz.radio >= voz.pico || tAhora - voz.picoT > 5000) { voz.pico = voz.radio; voz.picoT = tAhora; }
+
+        // qué NPCs te oyen
+        const miCasa = casaDe(px, pz);
+        let oyen = 0;
+        for (const n of NPCS) {
+            if (n.caido) { n.oyeVoz = false; continue; }
+            const d = Math.hypot(n.x - px, n.z - pz);
+            const alcance = voz.radio * (casaDe(n.x, n.z) === miCasa ? 1 : 0.5);
+            n.distVoz = d;
+            n.oyeVoz = alcance > 0 && d <= alcance;
+            if (n.oyeVoz) oyen++;
+        }
+        voz.oyen = oyen;
+
+        voz.acumHud += dt;
+        if (voz.acumHud >= 0.1) {
+            voz.acumHud = 0;
+            const barras = Math.round(voz.nivel * 8);
+            botonVoz.textContent = voz.calib > 0 ? "🎤 calibrando…" :
+                "🎤 " + "▮".repeat(barras) + "▯".repeat(8 - barras) + " " + voz.radio.toFixed(0) + " m · te oyen: " + oyen;
+        }
     }
 
     // ----- Paso del tiempo -----
@@ -4221,7 +5731,23 @@ if (!gl) {
             if (Math.abs((j.y || 0) - saltoY) > 1.2) continue;
             if (d < mejorD) { mejorD = d; mejor = oid; }
         }
-        if (mejor === null) {                      // si no le pegás a nadie, y apuntás a una ventana cerrada, la rompés
+        // ¿hay un NPC más cerca que cualquier jugador? A ese le pegás
+        let npcGolpeado = null, dNpc = 1e9;
+        for (const n of NPCS) {
+            if (n.caido) continue;
+            const dx = n.x - px, dz = n.z - pz;
+            const d = Math.hypot(dx, dz);
+            if (d > arma.alcance + 0.3) continue;
+            if (d > 0.5 && (dx * fx + dz * fz) / d < 0.7) continue;
+            if (Math.abs(saltoY) > 1.2) continue;
+            if (d < dNpc) { dNpc = d; npcGolpeado = n; }
+        }
+        if (npcGolpeado && dNpc < mejorD) {
+            const fz2 = Math.max(0.3, Math.min(1, sv.fuerza));
+            if (esAutoridad()) golpearNpc(npcGolpeado, arma.dano * fz2, idPropio());
+            else enviarRed({ tipo: "npcgolpe", i: npcGolpeado.i, arma: conArma ? id : "puno", f: fz2 });
+            mejor = null;
+        } else if (mejor === null) {                      // si no le pegás a nadie, y apuntás a una ventana cerrada, la rompés
             const v = ventanaApuntada(arma.alcance);
             if (v) romperVentana(v);
         }
@@ -4396,6 +5922,7 @@ if (!gl) {
         gl.drawArrays(gl.TRIANGLES, 0, cantidad);
         dibujarAberturas();
         dibujarOtros();
+        dibujarNpcs();
         dibujarItems(ahora / 1000);
         dibujarSombras();
         dibujarVidrios();
@@ -4423,6 +5950,8 @@ if (!gl) {
         tCongelado = null;
 
         actualizarAberturas(dt);
+        actualizarNpcs(dt);
+        actualizarVoz(dt);
         const multEstacion = actualizarEstaciones(dt, msReales);
         const multSupervivencia = actualizarSupervivencia(dt, msReales);
 

@@ -1033,7 +1033,8 @@ function dibujarFuego(dt, t) {
                         semilla: partida.semilla,
                         tiempoJugadoMs: partida.tiempoJugadoMs || 0,
                         supervivencia: partida.supervivencia || null,
-                        inventario: partida.inventario || null
+                        inventario: partida.inventario || null,
+                        memoriaNpcs: partida.memoriaNpcs || null
                     });
                 }
             }
@@ -1627,6 +1628,7 @@ document.getElementById("btnSalir").addEventListener("click", function () {
                 partida.tiempoJugadoMs = window.tiempoJugadoEstaciones();
                 if (window.Supervivencia) partida.supervivencia = window.Supervivencia.exportar();
                 if (window.Inventario) partida.inventario = window.Inventario.exportar();
+                if (window.MemoriaNpcs) partida.memoriaNpcs = window.MemoriaNpcs.exportar();
                 guardarPartidas(lista);
             }
             setInterval(guardarTiempoJugado, 5000);
